@@ -1,0 +1,14 @@
+# flyctl launch added from .gitignore
+**/node_modules
+**/config.json
+**/credentials.json
+**/guild-configs.json
+# Adds an empty line for separation
+# Node.js general ignores
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+
+# Optional: OS generated files
+**/.DS_Store
+fly.toml
