@@ -1,7 +1,7 @@
 // commands/testweek.js
 const { SlashCommandBuilder, PermissionsBitField, MessageFlags } = require('discord.js');
 
-// Constants (ideally shared)
+// Constants (ensure these match index.js or are passed/imported if centralized)
 const DAYS_OF_WEEK = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAY_SUB_HEADERS = [
     'Player Display Name', 'Screenshot', 'Timestamp (UTC)',
@@ -11,7 +11,7 @@ const ROWS_PER_DAY_BLOCK = 1 + DAY_SUB_HEADERS.length;
 const DRIVE_FILE_ID_SUB_HEADER_INDEX = DAY_SUB_HEADERS.indexOf('Drive File ID');
 
 async function commandReplyEphemeralAutoDelete(interaction, options, isFollowUp = false, isEdit = false) {
-    // ... (same helper function)
+    // ... (same helper function as in other command files)
     try {
         let sentMessage;
         const currentOptions = { ...options, flags: [MessageFlags.Ephemeral] };
@@ -34,28 +34,30 @@ async function commandReplyEphemeralAutoDelete(interaction, options, isFollowUp 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('testweek')
-        .setDescription('TEST CMD: Marks all days green, clears all weekly data, and deletes Drive screenshots after 15s.')
+        .setDescription('TEST CMD: Marks all days green, clears weekly data, and deletes Drive screenshots after 15s.')
         .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator)
         .setDMPermission(false),
 
-    async execute(interaction, client, guildConfigs, saveGuildConfigs, _clearSheetFunction, _replyHelper, sheetsClient, driveClient, SPREADSHEET_ID, SHEET_NAME, numericSheetId) {
-        const currentReplyHelper = typeof _replyHelper === 'function' ? _replyHelper : commandReplyEphemeralAutoDelete;
+    async execute(interaction, client, guildConfigs, saveGuildConfigs, _clearSheetFunction, replyHelper, sheetsClient, driveClient, SPREADSHEET_ID, SHEET_NAME, numericSheetId) {
+        console.log(`[TESTWEEK_CMD] Initiated by ${interaction.user.tag}`);
 
         if (!interaction.inGuild() || !interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-            currentReplyHelper(interaction, { content: 'This command is for administrators only and must be used in a server.' });
+            replyHelper(interaction, { content: 'This command is for administrators only and must be used in a server.' });
             return;
         }
         if (!sheetsClient || !driveClient || !SPREADSHEET_ID || !SHEET_NAME || typeof numericSheetId === 'undefined') {
-            currentReplyHelper(interaction, { content: 'Google Sheets/Drive integration is not ready. Cannot perform /testweek.' });
+            replyHelper(interaction, { content: 'Google Sheets/Drive integration is not ready. Cannot perform /testweek.' });
             return;
         }
 
-        await interaction.deferReply({ ephemeral: true });
-
         try {
+            console.log(`[TESTWEEK_CMD] Attempting to defer reply.`);
+            await interaction.deferReply({ flags: [MessageFlags.Ephemeral] }); // Use flags
+            console.log(`[TESTWEEK_CMD] Reply deferred successfully.`);
+
             const driveFileIdsToClear = [];
-            const batchUpdateRequests = [];
-            const rangesToClearData = [];
+            const batchUpdateRequestsForFormatting = [];
+            const rangesToClearDataInSheet = [];
 
             for (let i = 0; i < DAYS_OF_WEEK.length; i++) {
                 const dayName = DAYS_OF_WEEK[i];
@@ -64,77 +66,59 @@ module.exports = {
                 const endDataRowForDay = startDataRowForDay + DAY_SUB_HEADERS.length - 1;
                 const driveFileIdCellRow = startDataRowForDay + DRIVE_FILE_ID_SUB_HEADER_INDEX;
 
-                // 1. Prepare to get Drive File ID for the current day
                 try {
                     const getResponse = await sheetsClient.spreadsheets.values.get({
                         spreadsheetId: SPREADSHEET_ID,
-                        range: `'${SHEET_NAME}'!B${driveFileIdCellRow}`,
+                        range: `'${SHEET_NAME}'!B${driveFileIdCellRow}`, // Drive File ID is in Column B
                     });
-                    if (getResponse.data.values && getResponse.data.values[0] && getResponse.data.values[0][0]) {
+                    if (getResponse.data.values?.[0]?.[0]) {
                         driveFileIdsToClear.push(getResponse.data.values[0][0]);
                     }
-                } catch (err) {
-                    console.warn(`[TESTWEEK_WARN] Could not read Drive File ID for ${dayName}: ${err.message}`);
-                }
-
-                // 2. Prepare batch update requests
-                // Clear data cells for the day
-                rangesToClearData.push(`'${SHEET_NAME}'!B${startDataRowForDay}:B${endDataRowForDay}`);
+                } catch (err) { console.warn(`[TESTWEEK_WARN] No Drive File ID for ${dayName}: ${err.message}`); }
                 
-                // Format day header cell to green
-                batchUpdateRequests.push({
+                rangesToClearDataInSheet.push(`'${SHEET_NAME}'!B${startDataRowForDay}:B${endDataRowForDay}`);
+                batchUpdateRequestsForFormatting.push({
                     updateCells: {
-                        range: {
-                            sheetId: numericSheetId,
-                            startRowIndex: dayHeaderRowIndex - 1, // API is 0-indexed
-                            endRowIndex: dayHeaderRowIndex,
-                            startColumnIndex: 0, // Column A
-                            endColumnIndex: 1,   // Only Column A
-                        },
+                        range: { sheetId: numericSheetId, startRowIndex: dayHeaderRowIndex - 1, endRowIndex: dayHeaderRowIndex, startColumnIndex: 0, endColumnIndex: 1 },
                         rows: [{ values: [{ userEnteredFormat: { backgroundColorStyle: { rgbColor: { green: 0.7, red: 0.3, blue: 0.3 } } } }] }],
                         fields: "userEnteredFormat.backgroundColorStyle"
                     }
                 });
             }
 
-            // Execute batch clear for data first
-            if (rangesToClearData.length > 0) {
+            if (rangesToClearDataInSheet.length > 0) {
                 await sheetsClient.spreadsheets.values.batchClear({
-                    spreadsheetId: SPREADSHEET_ID,
-                    resource: { ranges: rangesToClearData }
+                    spreadsheetId: SPREADSHEET_ID, resource: { ranges: rangesToClearDataInSheet }
                 });
             }
-            // Then execute batch update for formatting
-            if (batchUpdateRequests.length > 0) {
+            if (batchUpdateRequestsForFormatting.length > 0) {
                  await sheetsClient.spreadsheets.batchUpdate({
-                    spreadsheetId: SPREADSHEET_ID,
-                    resource: { requests: batchUpdateRequests }
+                    spreadsheetId: SPREADSHEET_ID, resource: { requests: batchUpdateRequestsForFormatting }
                 });
             }
+            console.log(`[TESTWEEK_CMD] Marked all days green and cleared weekly data in Column B.`);
+            
+            const replyMsg = `All days marked green, weekly data slots cleared. Associated Drive files (${driveFileIdsToClear.length} found) will be deleted in 15 seconds.`;
+            replyHelper(interaction, { content: replyMsg }, false, true); // isEdit = true
 
-            console.log(`[TESTWEEK] Marked all days green and cleared weekly data in Column B.`);
-            currentReplyHelper(interaction, { content: `All days marked green, weekly data slots cleared. Associated Drive files (${driveFileIdsToClear.length} found) will be deleted in 15 seconds.` }, false, true);
-
-            // 3. After 15 seconds, delete from Drive
             if (driveFileIdsToClear.length > 0) {
                 setTimeout(async () => {
                     console.log(`[TESTWEEK_DRIVE_DELETE] Attempting to delete ${driveFileIdsToClear.length} Drive files.`);
                     for (const fileId of driveFileIdsToClear) {
                         try {
                             await driveClient.files.delete({ fileId: fileId });
-                            console.log(`[TESTWEEK_DRIVE_DELETE] Successfully deleted Drive file ${fileId}.`);
-                        } catch (driveError) {
-                            console.error(`[TESTWEEK_DRIVE_DELETE_ERROR] Failed to delete Drive file ${fileId}: ${driveError.message}`);
-                        }
+                            console.log(`[TESTWEEK_DRIVE_DELETE] Deleted Drive file ${fileId}.`);
+                        } catch (driveError) { console.error(`[TESTWEEK_DRIVE_DELETE_ERROR] Failed to delete Drive file ${fileId}: ${driveError.message}`); }
                     }
-                }, 15000); // 15 seconds
+                }, 15000);
             } else {
                 console.log(`[TESTWEEK_DRIVE_DELETE] No Drive File IDs found to delete.`);
             }
 
         } catch (error) {
-            console.error('[TESTWEEK_ERROR] Error executing /testweek command:', error);
-            currentReplyHelper(interaction, { content: 'An error occurred while executing /testweek. Check console.' }, false, true);
+            console.error('[TESTWEEK_CMD_ERROR] Error executing /testweek:', error);
+            replyHelper(interaction, { content: 'An error occurred. Check console.' }, false, true); // isEdit = true
         }
     },
 };
+

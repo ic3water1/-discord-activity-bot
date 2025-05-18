@@ -1,37 +1,6 @@
 // commands/tableclear.js
 const { SlashCommandBuilder, PermissionsBitField, MessageFlags } = require('discord.js');
 
-// Constants (ideally shared)
-const DAYS_OF_WEEK = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const DAY_SUB_HEADERS = [
-    'Player Display Name', 'Screenshot', 'Timestamp (UTC)',
-    'Verified', 'Strikes', 'Time in Server', 'Drive File ID'
-];
-const ROWS_PER_DAY_BLOCK = 1 + DAY_SUB_HEADERS.length;
-const DRIVE_FILE_ID_SUB_HEADER_INDEX = DAY_SUB_HEADERS.indexOf('Drive File ID');
-
-
-async function commandReplyEphemeralAutoDelete(interaction, options, isFollowUp = false, isEdit = false) {
-    // ... (same helper function)
-    try {
-        let sentMessage;
-        const currentOptions = { ...options, flags: [MessageFlags.Ephemeral] };
-        if (isEdit) sentMessage = await interaction.editReply(currentOptions);
-        else if (isFollowUp) sentMessage = await interaction.followUp(currentOptions);
-        else sentMessage = await interaction.reply(currentOptions);
-
-        if (sentMessage && typeof sentMessage.delete === 'function') {
-            setTimeout(() => {
-                sentMessage.delete().catch(err => {
-                    if (err.code !== 10008) console.error(`[AUTO_DELETE_ERROR] Ephemeral cmd reply ${sentMessage.id || 'unknown'}:`, err.message);
-                });
-            }, 10000); // 10 seconds
-        }
-    } catch (error) {
-        console.error(`[CMD_REPLY_ERROR] Failed to send or handle ephemeral auto-delete reply:`, error.message);
-    }
-}
-
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('tableclear')
@@ -39,27 +8,32 @@ module.exports = {
         .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator)
         .setDMPermission(false),
 
-    async execute(interaction, client, guildConfigs, saveGuildConfigs, _clearSheetFunctionFromIndex, _replyHelper, sheetsClient, driveClient, SPREADSHEET_ID, SHEET_NAME, numericSheetId) {
-        // Note: _clearSheetFunctionFromIndex is the old one that only clears sheet data.
-        // This command now implements its own clearing including Drive files.
-        const currentReplyHelper = typeof _replyHelper === 'function' ? _replyHelper : commandReplyEphemeralAutoDelete;
+    async execute(interaction, client, guildConfigs, saveGuildConfigs, _clearSheetFunctionFromIndex, replyHelper, sheetsClient, driveClient, SPREADSHEET_ID, SHEET_NAME, numericSheetId) {
+        console.log(`[TABLECLEAR_CMD] Initiated by ${interaction.user.tag}`);
 
         if (!interaction.inGuild() || !interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-            currentReplyHelper(interaction, { content: 'This command is for administrators only and must be used in a server.' });
+            replyHelper(interaction, { content: 'This command is for administrators only and must be used in a server.' });
             return;
         }
         if (!sheetsClient || !driveClient || !SPREADSHEET_ID || !SHEET_NAME || typeof numericSheetId === 'undefined') {
-            currentReplyHelper(interaction, { content: 'Google Sheets/Drive integration is not ready. Cannot perform /tableclear.' });
+            replyHelper(interaction, { content: 'Google Sheets/Drive integration is not ready.' });
             return;
         }
 
-        await interaction.deferReply({ ephemeral: true });
-
         try {
-            const driveFileIdsToClear = [];
-            const rangesToClearData = [];
+            console.log(`[TABLECLEAR_CMD] Attempting to defer reply.`);
+            await interaction.deferReply({ flags: [MessageFlags.Ephemeral] }); // Use flags
+            console.log(`[TABLECLEAR_CMD] Reply deferred successfully.`);
 
-            // 1. Collect all Drive File IDs from the sheet
+            // Constants (should match index.js)
+            const DAYS_OF_WEEK = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+            const DAY_SUB_HEADERS = ['Player Display Name', 'Screenshot', 'Timestamp (UTC)', 'Verified', 'Strikes', 'Time in Server', 'Drive File ID'];
+            const ROWS_PER_DAY_BLOCK = 1 + DAY_SUB_HEADERS.length;
+            const DRIVE_FILE_ID_SUB_HEADER_INDEX = DAY_SUB_HEADERS.indexOf('Drive File ID');
+
+            const driveFileIdsToClear = [];
+            const rangesToClearDataInSheet = [];
+
             for (let i = 0; i < DAYS_OF_WEEK.length; i++) {
                 const dayName = DAYS_OF_WEEK[i];
                 const dayHeaderRowIndex = (i * ROWS_PER_DAY_BLOCK) + 1;
@@ -70,49 +44,41 @@ module.exports = {
                 try {
                     const getResponse = await sheetsClient.spreadsheets.values.get({
                         spreadsheetId: SPREADSHEET_ID,
-                        range: `'${SHEET_NAME}'!B${driveFileIdCellRow}`, // Drive File ID is in Column B
+                        range: `'${SHEET_NAME}'!B${driveFileIdCellRow}`,
                     });
-                    if (getResponse.data.values && getResponse.data.values[0] && getResponse.data.values[0][0]) {
+                    if (getResponse.data.values?.[0]?.[0]) {
                         driveFileIdsToClear.push(getResponse.data.values[0][0]);
                     }
-                } catch (err) {
-                    console.warn(`[TABLECLEAR_WARN] Could not read Drive File ID for ${dayName}: ${err.message}`);
-                }
-                // Prepare ranges to clear data in Column B
-                rangesToClearData.push(`'${SHEET_NAME}'!B${startDataRowForDay}:B${endDataRowForDay}`);
+                } catch (err) { console.warn(`[TABLECLEAR_WARN] No Drive File ID for ${dayName}: ${err.message}`); }
+                rangesToClearDataInSheet.push(`'${SHEET_NAME}'!B${startDataRowForDay}:B${endDataRowForDay}`);
             }
 
-            // 2. Clear data cells in Column B
-            if (rangesToClearData.length > 0) {
+            if (rangesToClearDataInSheet.length > 0) {
                 await sheetsClient.spreadsheets.values.batchClear({
-                    spreadsheetId: SPREADSHEET_ID,
-                    resource: { ranges: rangesToClearData }
+                    spreadsheetId: SPREADSHEET_ID, resource: { ranges: rangesToClearDataInSheet }
                 });
             }
-            console.log(`[TABLECLEAR] Cleared all weekly data in Column B of sheet '${SHEET_NAME}'.`);
+            console.log(`[TABLECLEAR_CMD] Cleared Column B data in sheet '${SHEET_NAME}'.`);
 
-            // 3. Delete files from Google Drive
+            let deletedDriveCount = 0;
             if (driveFileIdsToClear.length > 0) {
-                console.log(`[TABLECLEAR_DRIVE_DELETE] Attempting to delete ${driveFileIdsToClear.length} Drive files.`);
-                let deletedCount = 0;
+                console.log(`[TABLECLEAR_CMD] Attempting to delete ${driveFileIdsToClear.length} Drive files.`);
                 for (const fileId of driveFileIdsToClear) {
                     try {
                         await driveClient.files.delete({ fileId: fileId });
-                        console.log(`[TABLECLEAR_DRIVE_DELETE] Successfully deleted Drive file ${fileId}.`);
-                        deletedCount++;
-                    } catch (driveError) {
-                        console.error(`[TABLECLEAR_DRIVE_DELETE_ERROR] Failed to delete Drive file ${fileId}: ${driveError.message}`);
-                    }
+                        console.log(`[TABLECLEAR_CMD] Deleted Drive file ${fileId}.`);
+                        deletedDriveCount++;
+                    } catch (driveError) { console.error(`[TABLECLEAR_CMD_ERROR] Failed to delete Drive file ${fileId}: ${driveError.message}`); }
                 }
-                currentReplyHelper(interaction, { content: `The Google Sheet data has been cleared. ${deletedCount}/${driveFileIdsToClear.length} associated Drive files deleted.` }, false, true);
-            } else {
-                currentReplyHelper(interaction, { content: 'The Google Sheet data has been cleared. No Drive files were found to delete.' }, false, true);
             }
-            console.log(`[TABLECLEAR] Sheet manually cleared by ${interaction.user.tag} in guild ${interaction.guild.name}`);
+            
+            const replyMsg = `Sheet data cleared. ${deletedDriveCount}/${driveFileIdsToClear.length} associated Drive files deleted.`;
+            replyHelper(interaction, { content: replyMsg }, false, true); // isEdit = true
+            console.log(`[TABLECLEAR_CMD] Command completed for ${interaction.user.tag}.`);
 
         } catch (error) {
-            console.error('[TABLECLEAR_ERROR] Error executing /tableclear command:', error);
-            currentReplyHelper(interaction, { content: 'An error occurred while trying to clear the table. Check console.' }, false, true);
+            console.error('[TABLECLEAR_CMD_ERROR] Error executing /tableclear:', error);
+            replyHelper(interaction, { content: 'An error occurred. Check console.' }, false, true); // isEdit = true
         }
     },
 };
