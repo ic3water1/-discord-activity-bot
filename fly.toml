@@ -1,0 +1,49 @@
+# fly.toml app configuration file for discordbotjs
+# Documentation: https://fly.io/docs/reference/configuration/
+
+app = 'discordbotjs'
+primary_region = 'dfw' # Or your chosen region
+
+# The [build] section tells Fly how to build your app.
+# If you have a Dockerfile, it will be used.
+[build]
+  dockerfile = "Dockerfile"
+
+# The [processes] block defines named process groups.
+# 'app' is the default process group that runs the CMD from your Dockerfile.
+[processes]
+  app = "" # An empty string means use the Dockerfile's CMD
+
+# This [[services]] block is configured to ensure your 'app' process runs continuously.
+# We are not exposing any public HTTP ports for a Discord bot.
+[[services]]
+  processes = ["app"]      # This service applies to the 'app' process group
+  protocol = "tcp"         # Internal protocol, not necessarily exposed
+  internal_port = 8080     # A dummy internal port for Fly.io's internal routing/health checks if needed
+                           # Your app doesn't actually need to listen on this port.
+
+  # Crucial settings for an always-on bot:
+  auto_stop_machines = false   # Do NOT stop the machine when idle
+  auto_start_machines = true   # Start the machine automatically if it stops
+  min_machines_running = 1     # Ensure at least ONE instance of your bot is always running
+
+  # Remove any HTTP or TCP health checks if your bot doesn't listen on a port,
+  # as they would fail and cause restarts. Fly.io will still monitor the process itself.
+  # If `fly launch` added [services.http_checks] or [services.tcp_checks], remove them.
+  # For example, if you had:
+  # [[services.ports]]
+  #  handlers = ["http"]
+  #  port = 80
+  #  force_https = true
+  # [[services.tcp_checks]]
+  #   interval = "15s"
+  #   timeout = "2s"
+  #   port = "8080" # This would fail if your bot doesn't listen on 8080
+  # You would remove these blocks.
+
+# VM Configuration for the free tier
+[[vm]]
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 256 # Explicitly define 256MB RAM for the common free tier
+
