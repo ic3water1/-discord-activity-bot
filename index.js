@@ -64,7 +64,10 @@ async function replyEphemeralAutoDelete(interaction, options, isFollowUp = false
 }
 
 async function ensureSheetHeaders() {
-    if (!sheetsClient || !SPREADSHEET_ID || !SHEET_NAME) return;
+    if (!sheetsClient || !SPREADSHEET_ID || !SHEET_NAME) {
+        console.log('[GSHEETS_HEADERS] Sheets client not ready or SPREADSHEET_ID/SHEET_NAME missing. Skipping header check.');
+        return;
+    }
     try {
         const rangeForHeaders = `'${SHEET_NAME}'!A1:${String.fromCharCode(64 + EXPECTED_HEADERS.length)}1`;
         const getResponse = await sheetsClient.spreadsheets.values.get({
