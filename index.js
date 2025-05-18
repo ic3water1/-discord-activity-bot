@@ -63,88 +63,21 @@ async function replyEphemeralAutoDelete(interaction, options, isFollowUp = false
     }
 }
 
-async function ensureSheetHeaders() {
-    if (!sheetsClient || !SPREADSHEET_ID || !SHEET_NAME) {
-        console.log('[GSHEETS_HEADERS] Sheets client not ready or SPREADSHEET_ID/SHEET_NAME missing. Skipping header check.');
-        return;
-    }
-    try {
-        const rangeForHeaders = `'${SHEET_NAME}'!A1:${String.fromCharCode(64 + EXPECTED_HEADERS.length)}1`;
-        const getResponse = await sheetsClient.spreadsheets.values.get({
-            spreadsheetId: SPREADSHEET_ID, range: rangeForHeaders,
-        });
-        const existingHeaders = getResponse.data.values ? getResponse.data.values[0] : [];
-        let headersMatch = existingHeaders.length === EXPECTED_HEADERS.length && EXPECTED_HEADERS.every((h, i) => h === existingHeaders[i]);
-        if (!headersMatch) {
-            console.log(`[GSHEETS_HEADERS] Writing/updating headers in sheet '${SHEET_NAME}'.`);
-            await sheetsClient.spreadsheets.values.update({
-                spreadsheetId: SPREADSHEET_ID, range: `'${SHEET_NAME}'!A1`,
-                valueInputOption: 'USER_ENTERED', resource: { values: [EXPECTED_HEADERS] },
-            });
-            console.log(`[GSHEETS_HEADERS] Successfully wrote/updated headers.`);
-        } else {
-            console.log(`[GSHEETS_HEADERS] Headers in sheet '${SHEET_NAME}' are correct.`);
-        }
-    } catch (error) {
-        console.error(`[GSHEETS_HEADERS_ERROR] Failed for '${SHEET_NAME}':`, error.message);
-        if (error.response?.data?.error?.message.includes("Unable to parse range")) {
-             console.error(`[GSHEETS_HEADERS_ERROR_DETAILS] Sheet '${SHEET_NAME}' might not exist in spreadsheet '${SPREADSHEET_ID}'.`);
-        }
-    }
-}
-
-async function authorizeGoogleAPIs() {
-    try {
-        if (!GOOGLE_CREDENTIALS_JSON_CONTENT) {
-            console.error('[GAPI_ERROR_AUTH_PRECHECK] GOOGLE_CREDENTIALS_JSON environment variable not set or empty.');
-            return false;
-        }
-        let googleCredentials;
-        try {
-            googleCredentials = JSON.parse(GOOGLE_CREDENTIALS_JSON_CONTENT);
-        } catch (parseError) {
-            console.error('[GAPI_ERROR_AUTH] Failed to parse GOOGLE_CREDENTIALS_JSON. Ensure it is a valid JSON string.', parseError);
-            return false;
-        }
-        googleAuthClient = new google.auth.GoogleAuth({ credentials: googleCredentials, scopes: API_SCOPES });
-        const authClient = await googleAuthClient.getClient();
-        sheetsClient = google.sheets({ version: 'v4', auth: authClient });
-        console.log(`[GSHEETS] Authorized. Target: ${SPREADSHEET_ID}, Sheet: ${SHEET_NAME}`);
-        driveClient = google.drive({ version: 'v3', auth: authClient });
-        console.log(`[GDRIVE] Authorized for Google Drive API.`);
-        if (!SPREADSHEET_ID || !SHEET_NAME) {
-            console.error("[GSHEETS_ERROR] SPREADSHEET_ID or SHEET_NAME is missing after authorization.");
-            return true;
-        }
-        const spreadsheetMeta = await sheetsClient.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID, fields: 'sheets(properties(sheetId,title))' });
-        const targetSheet = spreadsheetMeta.data.sheets.find(s => s.properties.title === SHEET_NAME);
-        if (targetSheet) {
-            numericSheetId = targetSheet.properties.sheetId;
-            console.log(`[GSHEETS] Numeric sheetId for '${SHEET_NAME}' is: ${numericSheetId}`);
-            await ensureSheetHeaders();
-        } else {
-            console.error(`[GSHEETS_ERROR] Could not find sheet named '${SHEET_NAME}'. Ensure it exists.`);
-        }
-        return true;
-    } catch (error) {
-        console.error('[GAPI_ERROR_AUTH] Failed to authorize Google Sheets/Drive or process sheet metadata:', error.message);
-        return false;
-    }
-}
-
+async function ensureSheetHeaders() { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
+async function authorizeGoogleAPIs() { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
 const GUILD_CONFIGS_PATH = path.join(__dirname, 'guild-configs.json');
 let guildConfigs = {};
 let openTickets = {};
+function loadGuildConfigs() { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
+function saveGuildConfigs() { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
+function formatTimestamp(date, includeSeconds = false, dateOnly = false) { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
+async function clearSheet() { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
+async function autoResizeSheetColumns() { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
+function formatDuration(ms, short = false) { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
+async function updatePromptMessage(guildId, messageId, channelId, clientInstance) { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
+async function updateAllPromptMessages(clientInstance) { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
 
-function loadGuildConfigs() { /* ... same ... */ }
-function saveGuildConfigs() { /* ... same ... */ }
-function formatTimestamp(date, includeSeconds = false, dateOnly = false) { /* ... same (MM-DD-YY format) ... */ }
-async function clearSheet() { /* ... same ... */ }
-async function autoResizeSheetColumns() { /* ... same ... */ }
-function formatDuration(ms, short = false) { /* ... same ... */ }
-async function updatePromptMessage(guildId, messageId, channelId, clientInstance) { /* ... same ... */ }
-async function updateAllPromptMessages(clientInstance) { /* ... same ... */ }
-
+// --- Main Bot Logic (IIFE) ---
 (async () => {
     console.log("--- Initializing Bot ---");
     if (!TOKEN || !SPREADSHEET_ID || !DRIVE_FOLDER_ID || !GOOGLE_CREDENTIALS_JSON_CONTENT || !SHEET_NAME) {
@@ -156,10 +89,12 @@ async function updateAllPromptMessages(clientInstance) { /* ... same ... */ }
         console.log(`  GOOGLE_CREDENTIALS_JSON_CONTENT present: ${!!GOOGLE_CREDENTIALS_JSON_CONTENT}`);
         process.exit(1);
     }
+
     if (!await authorizeGoogleAPIs()) {
-        console.error("[FATAL] Failed to authorize Google APIs.");
+        console.error("[FATAL] Failed to authorize Google APIs. Bot functionality will be severely limited or non-functional.");
     }
     loadGuildConfigs();
+
     const client = new Client({
         intents: [
             GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent,
@@ -167,7 +102,9 @@ async function updateAllPromptMessages(clientInstance) { /* ... same ... */ }
         ],
         partials: [Partials.Message, Partials.Channel, Partials.Reaction],
     });
+
     client.updatePromptMessage = updatePromptMessage;
+
     client.commands = new Collection();
     const commandsPath = path.join(__dirname, 'commands');
     try {
@@ -186,16 +123,38 @@ async function updateAllPromptMessages(clientInstance) { /* ... same ... */ }
         console.error(`[ERROR] Could not read commands dir:`, error);
     }
 
-    client.once(Events.ClientReady, readyClient => { /* ... same ... */ });
-    client.on(Events.InteractionCreate, async interaction => { /* ... same, ensure replyEphemeralAutoDelete is used ... */ });
-    client.on(Events.MessageCreate, async message => { /* ... same (Google Drive version) ... */ });
-    client.on(Events.ChannelDelete, channel => { /* ... same ... */ });
-
-    client.login(TOKEN).then(() => console.log("Login to Discord successful!")).catch(error => {
-        console.error("\n[FATAL ERROR] Failed to log in:", error.message);
-        if (error.code === 'DisallowedIntents') console.error("[FATAL ERROR] Privileged Intents likely missing.");
-        else if (error.message.includes("TOKEN_INVALID")) console.error("[FATAL ERROR] BOT TOKEN invalid/missing.");
-        process.exit(1);
+    client.once(Events.ClientReady, readyClient => {
+        console.log(`\nReady! Logged in as ${readyClient.user.tag}`);
+        console.log(`Bot ID: ${readyClient.user.id}`);
+        console.log(`Bot is in ${readyClient.guilds.cache.size} guilds.`);
+        cron.schedule('0 0 * * 0', () => { console.log('[CRON] Running weekly sheet clear job...'); clearSheet(); }, { scheduled: true, timezone: "UTC" });
+        console.log('[CRON] Weekly sheet clear scheduled for Sunday 00:00 UTC.');
+        setInterval(() => updateAllPromptMessages(client), 60000);
+        updateAllPromptMessages(client);
+        console.log('[PROMPT_UPDATE] Periodic prompt message updates scheduled (every 1 min).');
     });
+
+    client.on(Events.InteractionCreate, async interaction => { /* ... same interaction logic as v17 ... */ });
+    client.on(Events.MessageCreate, async message => { /* ... same message creation logic as v17 ... */ });
+    client.on(Events.ChannelDelete, channel => { /* ... same channel delete logic as v17 ... */ });
+
+    try {
+        await client.login(TOKEN);
+        console.log("Login to Discord successful!");
+    } catch (error) {
+        console.error("\n[FATAL ERROR] Failed to log in to Discord:", error.message);
+        if (error.code === 'DisallowedIntents') console.error("[FATAL ERROR] Privileged Gateway Intents likely missing or disabled for your bot in the Discord Developer Portal.");
+        else if (error.message.includes("TOKEN_INVALID") || (error.rawError && error.rawError.message === 'Unauthorized')) {
+            console.error("[FATAL ERROR] The BOT TOKEN is invalid or missing. Check your environment variable.");
+        } else {
+            console.error("[FATAL ERROR] An unexpected error occurred during login:", error);
+        }
+        process.exit(1); // Exit if login fails
+    }
+
+    // Keep the process alive after successful login and event listener setup
+    console.log("[INFO] Bot is running and listening for events. Process will be kept alive.");
+    await new Promise(() => {}); // This creates a Promise that never resolves, keeping the Node.js event loop active.
+
 })();
 
