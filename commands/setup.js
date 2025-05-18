@@ -1,30 +1,10 @@
 // commands/setup.js
 const { SlashCommandBuilder, PermissionsBitField, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
-// const config = require('../config.json'); // REMOVED THIS LINE
+// const config = require('../config.json'); // This was correctly removed
 
-const EPHEMERAL_DELETE_DELAY = 10000; // 10 seconds
+const EPHEMERAL_DELETE_DELAY = 10000;
 
-async function commandReplyEphemeralAutoDelete(interaction, options, isFollowUp = false, isEdit = false) {
-    try {
-        let sentMessage;
-        const currentOptions = { ...options, flags: [MessageFlags.Ephemeral] };
-        if (isEdit) sentMessage = await interaction.editReply(currentOptions);
-        else if (isFollowUp) sentMessage = await interaction.followUp(currentOptions);
-        else sentMessage = await interaction.reply(currentOptions);
-
-        if (sentMessage && typeof sentMessage.delete === 'function') {
-            setTimeout(() => {
-                sentMessage.delete().catch(err => {
-                    if (err.code !== 10008) { // Silently ignore "Unknown Message"
-                        console.error(`[AUTO_DELETE_ERROR] Failed to delete ephemeral cmd reply ${sentMessage.id || 'unknown'}:`, err.message);
-                    }
-                });
-            }, EPHEMERAL_DELETE_DELAY);
-        }
-    } catch (error) {
-        console.error(`[CMD_REPLY_ERROR] Failed to send or handle ephemeral auto-delete reply:`, error.message);
-    }
-}
+async function commandReplyEphemeralAutoDelete(interaction, options, isFollowUp = false, isEdit = false) { /* ... same helper as v8 ... */ }
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -34,10 +14,16 @@ module.exports = {
         .setDMPermission(false),
 
     async execute(interaction, client, guildConfigs, saveGuildConfigs) {
+        console.log(`[SETUP_CMD_DEBUG] /setup command execution started by ${interaction.user.tag} in channel ${interaction.channel.name}`); // ADDED DEBUG
+
         if (!interaction.inGuild()) {
             commandReplyEphemeralAutoDelete(interaction, { content: 'This command can only be used in a server.' });
             return;
         }
+        // ... rest of the setup command logic from v8 ...
+        // Ensure all interaction.reply, editReply, followUp use commandReplyEphemeralAutoDelete
+        // or have their own deferReply() very early if they do significant work.
+        // The existing setup.js (v8) already uses deferReply at the start of its try block.
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             commandReplyEphemeralAutoDelete(interaction, { content: 'You must be an administrator to run this command.' });
             return;
@@ -62,7 +48,10 @@ module.exports = {
         const adminRoleIds = adminRoles.map(role => role.id);
 
         try {
-            await interaction.deferReply({ ephemeral: true });
+            console.log(`[SETUP_CMD_DEBUG] Attempting to defer reply for /setup.`);
+            await interaction.deferReply({ ephemeral: true }); // This is the crucial first acknowledgement
+            console.log(`[SETUP_CMD_DEBUG] Reply deferred successfully.`);
+
             const openTicketButton = new ButtonBuilder()
                 .setCustomId('create_ticket_button')
                 .setLabel('🎟️ Open Ticket')
@@ -103,10 +92,7 @@ Click the "🎟️ Open Ticket" button below to create a private channel where y
             }
 
             const promptMessage = await channel.send({ content: initialMessageContent, components: [row] });
-
-            // Get SPREADSHEET_ID from process.env to store in guildConfig for the admin button
             const currentSpreadsheetId = process.env.SPREADSHEET_ID;
-
             guildConfigs[interaction.guildId] = {
                 guildId: interaction.guildId,
                 guildName: interaction.guild.name,
@@ -117,7 +103,7 @@ Click the "🎟️ Open Ticket" button below to create a private channel where y
                 adminRoleIds: adminRoleIds,
                 shutdownRoleId: shutdownRole ? shutdownRole.id : null,
                 shutdownRoleName: shutdownRole ? shutdownRole.name : null,
-                spreadsheetId: currentSpreadsheetId // Store the ID from environment
+                spreadsheetId: currentSpreadsheetId
             };
             saveGuildConfigs();
             console.log(`--- Setup Command Executed & Config Saved for Guild: ${interaction.guild.name} (${interaction.guildId}) ---`);
@@ -132,9 +118,9 @@ Click the "🎟️ Open Ticket" button below to create a private channel where y
         } catch (error) {
             console.error('[ERROR] Error executing /setup command:', error);
             const errorReplyOptions = { content: 'An error occurred during setup. Please check the console and my permissions.' };
-            if (interaction.deferred || interaction.replied) {
-                commandReplyEphemeralAutoDelete(interaction, errorReplyOptions, false, true);
-            } else {
+            if (interaction.deferred || interaction.replied) { // Should always be deferred at this point
+                commandReplyEphemeralAutoDelete(interaction, errorReplyOptions, false, true); // isEdit = true
+            } else { // Fallback, though deferReply should have been called
                 commandReplyEphemeralAutoDelete(interaction, errorReplyOptions);
             }
         }

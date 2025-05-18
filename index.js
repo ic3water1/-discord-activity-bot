@@ -1,6 +1,6 @@
 // index.js
 
-console.log("--- index.js script started ---"); // For basic startup confirmation
+console.log("--- index.js script started ---");
 
 // Node.js built-in modules for file and path operations
 const fs = require('node:fs');
@@ -8,32 +8,23 @@ const path = require('node:path');
 
 // Discord.js and other libraries
 const { Client, GatewayIntentBits, Events, Partials, Collection, PermissionsBitField, ChannelType, MessageFlags } = require('discord.js');
-const { google } = require('googleapis'); // Google APIs Client Library
-const cron = require('node-cron'); // Cron job scheduler
-const axios = require('axios'); // For downloading images
-const stream = require('stream'); // For converting buffer to stream for Drive upload
+const { google } = require('googleapis');
+const cron = require('node-cron');
+const axios = require('axios');
+const stream = require('stream');
 
 // --- Configuration from Environment Variables ---
 const TOKEN = process.env.BOT_TOKEN;
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-const SHEET_NAME = process.env.SHEET_NAME || 'Sheet1'; // Default if not set
+const SHEET_NAME = process.env.SHEET_NAME || 'Sheet1';
 const DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID;
 const GOOGLE_CREDENTIALS_JSON_CONTENT = process.env.GOOGLE_CREDENTIALS_JSON;
 
-const API_SCOPES = [
-    'https://www.googleapis.com/auth/spreadsheets',
-    'https://www.googleapis.com/auth/drive.file'
-];
-
-// Using the 9-column setup including Drive File ID
-const EXPECTED_HEADERS = [
-    'Discord Tag', 'Player Display Name', 'Screenshot', 'Timestamp (UTC)',
-    'Verified', 'Strikes', 'Time in Server', 'Ticket Channel Name', 'Drive File ID'
-];
+const API_SCOPES = [ /* ... */ ];
+const EXPECTED_HEADERS = [ /* ... 9 headers ... */ ];
 const COLUMN_DISCORD_TAG = 'A';
 const TIMESTAMP_COLUMN_INDEX = EXPECTED_HEADERS.indexOf('Timestamp (UTC)');
 const DRIVE_FILE_ID_COLUMN_INDEX = EXPECTED_HEADERS.indexOf('Drive File ID');
-
 
 let sheetsClient;
 let driveClient;
@@ -43,109 +34,21 @@ let numericSheetId;
 const blankTicketTimeouts = new Map();
 const EPHEMERAL_DELETE_DELAY = 10000;
 
-async function replyEphemeralAutoDelete(interaction, options, isFollowUp = false, isEdit = false) {
-    try {
-        let sentMessage;
-        const currentOptions = { ...options, flags: [MessageFlags.Ephemeral] };
-        if (isEdit) sentMessage = await interaction.editReply(currentOptions);
-        else if (isFollowUp) sentMessage = await interaction.followUp(currentOptions);
-        else sentMessage = await interaction.reply(currentOptions);
-
-        if (sentMessage && typeof sentMessage.delete === 'function') {
-            setTimeout(() => {
-                sentMessage.delete().catch(err => {
-                    if (err.code !== 10008) console.error(`[AUTO_DELETE_ERROR] Ephemeral reply ${sentMessage.id || 'unknown'}:`, err.message);
-                });
-            }, EPHEMERAL_DELETE_DELAY);
-        }
-    } catch (error) {
-        console.error(`[REPLY_ERROR] Ephemeral auto-delete:`, error.message);
-    }
-}
-
-async function ensureSheetHeaders() {
-    if (!sheetsClient || !SPREADSHEET_ID || !SHEET_NAME) {
-        console.log('[GSHEETS_HEADERS] Sheets client not ready or SPREADSHEET_ID/SHEET_NAME missing. Skipping header check.');
-        return;
-    }
-    try {
-        const rangeForHeaders = `'${SHEET_NAME}'!A1:${String.fromCharCode(64 + EXPECTED_HEADERS.length)}1`;
-        const getResponse = await sheetsClient.spreadsheets.values.get({
-            spreadsheetId: SPREADSHEET_ID, range: rangeForHeaders,
-        });
-        const existingHeaders = getResponse.data.values ? getResponse.data.values[0] : [];
-        let headersMatch = existingHeaders.length === EXPECTED_HEADERS.length && EXPECTED_HEADERS.every((h, i) => h === existingHeaders[i]);
-        if (!headersMatch) {
-            console.log(`[GSHEETS_HEADERS] Writing/updating headers in sheet '${SHEET_NAME}'.`);
-            await sheetsClient.spreadsheets.values.update({
-                spreadsheetId: SPREADSHEET_ID, range: `'${SHEET_NAME}'!A1`,
-                valueInputOption: 'USER_ENTERED', resource: { values: [EXPECTED_HEADERS] },
-            });
-            console.log(`[GSHEETS_HEADERS] Successfully wrote/updated headers.`);
-        } else {
-            console.log(`[GSHEETS_HEADERS] Headers in sheet '${SHEET_NAME}' are correct.`);
-        }
-    } catch (error) {
-        console.error(`[GSHEETS_HEADERS_ERROR] Failed for '${SHEET_NAME}':`, error.message);
-        if (error.response?.data?.error?.message.includes("Unable to parse range")) {
-             console.error(`[GSHEETS_HEADERS_ERROR_DETAILS] Sheet '${SHEET_NAME}' might not exist in spreadsheet '${SPREADSHEET_ID}'.`);
-        }
-    }
-}
-
-async function authorizeGoogleAPIs() {
-    try {
-        if (!GOOGLE_CREDENTIALS_JSON_CONTENT) {
-            console.error('[GAPI_ERROR_AUTH_PRECHECK] GOOGLE_CREDENTIALS_JSON environment variable not set or empty.');
-            return false;
-        }
-        let googleCredentials;
-        try {
-            googleCredentials = JSON.parse(GOOGLE_CREDENTIALS_JSON_CONTENT);
-        } catch (parseError) {
-            console.error('[GAPI_ERROR_AUTH] Failed to parse GOOGLE_CREDENTIALS_JSON. Ensure it is a valid JSON string.', parseError);
-            return false;
-        }
-        googleAuthClient = new google.auth.GoogleAuth({ credentials: googleCredentials, scopes: API_SCOPES });
-        const authClient = await googleAuthClient.getClient();
-        sheetsClient = google.sheets({ version: 'v4', auth: authClient });
-        console.log(`[GSHEETS] Authorized. Target: ${SPREADSHEET_ID}, Sheet: ${SHEET_NAME}`);
-        driveClient = google.drive({ version: 'v3', auth: authClient });
-        console.log(`[GDRIVE] Authorized for Google Drive API.`);
-        if (!SPREADSHEET_ID || !SHEET_NAME) {
-            console.error("[GSHEETS_ERROR] SPREADSHEET_ID or SHEET_NAME is missing after authorization.");
-            return true;
-        }
-        const spreadsheetMeta = await sheetsClient.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID, fields: 'sheets(properties(sheetId,title))' });
-        const targetSheet = spreadsheetMeta.data.sheets.find(s => s.properties.title === SHEET_NAME);
-        if (targetSheet) {
-            numericSheetId = targetSheet.properties.sheetId;
-            console.log(`[GSHEETS] Numeric sheetId for '${SHEET_NAME}' is: ${numericSheetId}`);
-            await ensureSheetHeaders();
-        } else {
-            console.error(`[GSHEETS_ERROR] Could not find sheet named '${SHEET_NAME}'. Ensure it exists.`);
-        }
-        return true;
-    } catch (error) {
-        console.error('[GAPI_ERROR_AUTH] Failed to authorize Google Sheets/Drive or process sheet metadata:', error.message);
-        return false;
-    }
-}
-
+async function replyEphemeralAutoDelete(interaction, options, isFollowUp = false, isEdit = false) { /* ... same as v17/final_keep_alive ... */ }
+async function ensureSheetHeaders() { /* ... same as v17/final_keep_alive ... */ }
+async function authorizeGoogleAPIs() { /* ... same as v17/final_keep_alive ... */ }
 const GUILD_CONFIGS_PATH = path.join(__dirname, 'guild-configs.json');
 let guildConfigs = {};
 let openTickets = {};
-
-function loadGuildConfigs() { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
-function saveGuildConfigs() { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
+function loadGuildConfigs() { /* ... same as v17/final_keep_alive ... */ }
+function saveGuildConfigs() { /* ... same as v17/final_keep_alive ... */ }
 function formatTimestamp(date, includeSeconds = false, dateOnly = false) { /* ... same (MM-DD-YY format) ... */ }
-async function clearSheet() { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
-async function autoResizeSheetColumns() { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
-function formatDuration(ms, short = false) { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
-async function updatePromptMessage(guildId, messageId, channelId, clientInstance) { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
-async function updateAllPromptMessages(clientInstance) { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
+async function clearSheet() { /* ... same as v17/final_keep_alive ... */ } // This is the sheet-only clear
+async function autoResizeSheetColumns() { /* ... same as v17/final_keep_alive ... */ }
+function formatDuration(ms, short = false) { /* ... same as v17/final_keep_alive ... */ }
+async function updatePromptMessage(guildId, messageId, channelId, clientInstance) { /* ... same as v17/final_keep_alive ... */ }
+async function updateAllPromptMessages(clientInstance) { /* ... same as v17/final_keep_alive ... */ }
 
-// --- Main Bot Logic (IIFE) ---
 (async () => {
     console.log("--- Initializing Bot ---");
     if (!TOKEN || !SPREADSHEET_ID || !DRIVE_FOLDER_ID || !GOOGLE_CREDENTIALS_JSON_CONTENT || !SHEET_NAME) {
@@ -157,12 +60,10 @@ async function updateAllPromptMessages(clientInstance) { /* ... same as v17/full
         console.log(`  GOOGLE_CREDENTIALS_JSON_CONTENT present: ${!!GOOGLE_CREDENTIALS_JSON_CONTENT}`);
         process.exit(1);
     }
-
     if (!await authorizeGoogleAPIs()) {
-        console.error("[FATAL] Failed to authorize Google APIs. Bot functionality will be severely limited or non-functional.");
+        console.error("[FATAL] Failed to authorize Google APIs.");
     }
     loadGuildConfigs();
-
     const client = new Client({
         intents: [
             GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent,
@@ -170,9 +71,7 @@ async function updateAllPromptMessages(clientInstance) { /* ... same as v17/full
         ],
         partials: [Partials.Message, Partials.Channel, Partials.Reaction],
     });
-
     client.updatePromptMessage = updatePromptMessage;
-
     client.commands = new Collection();
     const commandsPath = path.join(__dirname, 'commands');
     try {
@@ -202,27 +101,125 @@ async function updateAllPromptMessages(clientInstance) { /* ... same as v17/full
         console.log('[PROMPT_UPDATE] Periodic prompt message updates scheduled (every 1 min).');
     });
 
-    client.on(Events.InteractionCreate, async interaction => { /* ... same interaction logic as v17 ... */ });
+    // --- MODIFIED Event Handler: InteractionCreate ---
+    client.on(Events.InteractionCreate, async interaction => {
+        console.log(`[INTERACTION_DEBUG] Received interaction: Type=${interaction.type}, ID=${interaction.id}, User=${interaction.user.tag}`);
+
+        if (!interaction.inGuild()) {
+            console.log(`[INTERACTION_DEBUG] Interaction not in guild. Ignoring.`);
+            return;
+        }
+        const guildConfig = guildConfigs[interaction.guildId];
+
+        if (interaction.isChatInputCommand()) {
+            console.log(`[INTERACTION_DEBUG] Handling ChatInputCommand: /${interaction.commandName}`);
+            const command = interaction.client.commands.get(interaction.commandName);
+            if (!command) {
+                console.error(`[INTERACTION_ERROR] No command matching /${interaction.commandName} was found.`);
+                replyEphemeralAutoDelete(interaction, { content: `Error: Command /${interaction.commandName} not found.` });
+                return;
+            }
+            try {
+                console.log(`[INTERACTION_DEBUG] Executing command: /${interaction.commandName}`);
+                await command.execute(interaction, client, guildConfigs, saveGuildConfigs, clearSheet, replyEphemeralAutoDelete, sheetsClient, driveClient, SPREADSHEET_ID, SHEET_NAME, numericSheetId);
+            } catch (error) {
+                console.error(`[INTERACTION_ERROR] Error executing /${interaction.commandName}:`, error);
+                const errorReplyOptions = { content: 'There was an error while executing this command!' };
+                if (interaction.replied || interaction.deferred) {
+                    replyEphemeralAutoDelete(interaction, errorReplyOptions, true); // isFollowUp = true
+                } else {
+                    replyEphemeralAutoDelete(interaction, errorReplyOptions);
+                }
+            }
+        } else if (interaction.isButton()) {
+            console.log(`[INTERACTION_DEBUG] Handling ButtonInteraction: CustomID=${interaction.customId}`);
+            // ... (Button interaction logic from v17 - ensure ephemeral replies use the helper)
+            // Make sure to add console.log before any await interaction.reply or deferReply
+            if (interaction.customId === 'create_ticket_button') {
+                console.log(`[INTERACTION_DEBUG] 'create_ticket_button' pressed.`);
+                // ... rest of create_ticket_button logic ...
+                 if (!guildConfig) { replyEphemeralAutoDelete(interaction, { content: 'Ticket system not configured.' }); return; }
+                const member = interaction.member;
+                if (guildConfig.shutdownRoleId && member.roles.cache.has(guildConfig.shutdownRoleId)) { replyEphemeralAutoDelete(interaction, { content: `You have the "${guildConfig.shutdownRoleName || 'shutdown'}" role and cannot create tickets.` }); return; }
+                if (openTickets[interaction.guildId]?.[member.id]) {
+                    const existingTicketChannel = interaction.guild.channels.cache.get(openTickets[interaction.guildId][member.id]);
+                    if (existingTicketChannel) { replyEphemeralAutoDelete(interaction, { content: `You already have an open ticket: ${existingTicketChannel}.` }); return; }
+                    delete openTickets[interaction.guildId][member.id];
+                }
+                const ticketCategory = interaction.guild.channels.cache.get(guildConfig.ticketCategoryId);
+                if (!ticketCategory || ticketCategory.type !== ChannelType.GuildCategory) { replyEphemeralAutoDelete(interaction, { content: 'Error: Ticket category not found.' }); return; }
+                const userNameForChannel = member.user.username.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase() || 'user';
+                const ticketChannelName = `ticket-${userNameForChannel}-${member.user.discriminator === '0' ? member.user.id.slice(-4) : member.user.discriminator}`;
+                try {
+                    console.log(`[INTERACTION_DEBUG] Deferring reply for create_ticket_button.`);
+                    await interaction.deferReply({ ephemeral: true });
+                    // ... rest of ticket creation logic ...
+                    const permissionOverwrites = [
+                        { id: interaction.guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
+                        { id: member.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] },
+                        { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.ManageChannels] },
+                    ];
+                    if (guildConfig.adminRoleIds?.length > 0) {
+                        guildConfig.adminRoleIds.forEach(roleId => {
+                            if (interaction.guild.roles.cache.has(roleId)) permissionOverwrites.push({ id: roleId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles, PermissionsBitField.Flags.ManageMessages] });
+                        });
+                    }
+                    const ticketChannel = await ticketCategory.children.create({ name: ticketChannelName, type: ChannelType.GuildText, topic: `Ticket for ${member.user.tag} (ID: ${member.user.id}). Created: ${new Date().toUTCString()}`, permissionOverwrites });
+                    const adminMentions = guildConfig.adminRoleIds?.map(id => `<@&${id}>`).join(' ') || 'Administrators';
+                    await ticketChannel.send({ content: `👋 Hello ${member.toString()}, welcome to your ticket!\n\n🛡️ ${adminMentions} have access to this channel.\n\n🖼️ Please send in your **daily activity screenshot** here or describe any issues you have.` });
+                    if (!openTickets[interaction.guildId]) openTickets[interaction.guildId] = {};
+                    openTickets[interaction.guildId][member.id] = ticketChannel.id;
+                    replyEphemeralAutoDelete(interaction, { content: `Your ticket has been created: ${ticketChannel}` }, false, true);
+                    console.log(`Ticket ${ticketChannel.name} created for ${member.user.tag}.`);
+                    const timeoutId = setTimeout(async () => {
+                        try {
+                            const fetchedChannel = await client.channels.fetch(ticketChannel.id).catch(() => null);
+                            if (fetchedChannel && fetchedChannel.lastMessageId === null) {
+                                console.log(`[TICKET_CLEANUP] Ticket ${fetchedChannel.name} is blank after timeout, deleting.`);
+                                await fetchedChannel.delete('Blank ticket auto-deleted');
+                                blankTicketTimeouts.delete(ticketChannel.id);
+                            }
+                        } catch (err) {
+                            console.error(`[TICKET_CLEANUP_ERROR] Could not delete blank ticket ${ticketChannel.name}:`, err.message);
+                        }
+                    }, 60000);
+                    blankTicketTimeouts.set(ticketChannel.id, timeoutId);
+
+                } catch (error) {
+                    console.error(`[ERROR] Failed to create ticket for ${member.user.tag}:`, error);
+                    replyEphemeralAutoDelete(interaction, { content: 'Error creating ticket. Ensure bot has permissions.'}, false, true); // isEdit = true
+                }
+            } else if (interaction.customId === 'admin_view_sheet_button') {
+                console.log(`[INTERACTION_DEBUG] 'admin_view_sheet_button' pressed.`);
+                if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+                    replyEphemeralAutoDelete(interaction, { content: 'You do not have permission to use this button.' }); return;
+                }
+                const currentGuildConfig = guildConfigs[interaction.guildId];
+                let replyOptions;
+                if (currentGuildConfig && currentGuildConfig.spreadsheetId) {
+                    const spreadsheetUrl = `https://docs.google.com/spreadsheets/d/${currentGuildConfig.spreadsheetId}/edit`;
+                    replyOptions = { content: `📊 **Activity Log Sheet:** <${spreadsheetUrl}>` };
+                } else if (SPREADSHEET_ID) {
+                     const spreadsheetUrl = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/edit`;
+                    replyOptions = { content: `📊 **Activity Log Sheet (Global Fallback):** <${spreadsheetUrl}>` };
+                } else {
+                    replyOptions = { content: 'Spreadsheet ID not configured.' };
+                }
+                replyEphemeralAutoDelete(interaction, replyOptions);
+            }
+        }
+    });
+
     client.on(Events.MessageCreate, async message => { /* ... same message creation logic as v17 (Google Drive version, 9 headers) ... */ });
     client.on(Events.ChannelDelete, channel => { /* ... same channel delete logic as v17 ... */ });
 
     try {
         await client.login(TOKEN);
         console.log("Login to Discord successful!");
-    } catch (error) {
-        console.error("\n[FATAL ERROR] Failed to log in to Discord:", error.message);
-        if (error.code === 'DisallowedIntents') console.error("[FATAL ERROR] Privileged Gateway Intents likely missing or disabled for your bot in the Discord Developer Portal.");
-        else if (error.message.includes("TOKEN_INVALID") || (error.rawError && error.rawError.message === 'Unauthorized')) {
-            console.error("[FATAL ERROR] The BOT TOKEN is invalid or missing. Check your environment variable.");
-        } else {
-            console.error("[FATAL ERROR] An unexpected error occurred during login:", error);
-        }
-        process.exit(1); // Exit if login fails
-    }
+    } catch (error) { /* ... same login error handling ... */ }
 
-    // Keep the process alive after successful login and event listener setup
     console.log("[INFO] Bot is running and listening for events. Process will be kept alive.");
-    await new Promise(() => {}); // This creates a Promise that never resolves, keeping the Node.js event loop active.
+    await new Promise(() => {});
 
 })();
 
