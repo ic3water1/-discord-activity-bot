@@ -1,35 +1,30 @@
 // commands/setup.js
 const { SlashCommandBuilder, PermissionsBitField, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
-const config = require('../config.json'); // Go up one directory to access config.json
+// const config = require('../config.json'); // REMOVE THIS LINE - config is no longer used directly here
 
 const EPHEMERAL_DELETE_DELAY = 10000; // 10 seconds
 
-// Helper function to send and then delete an ephemeral reply (specific to command execution context)
 async function commandReplyEphemeralAutoDelete(interaction, options, isFollowUp = false, isEdit = false) {
     try {
         let sentMessage;
-        if (isEdit) {
-            sentMessage = await interaction.editReply(options);
-        } else if (isFollowUp) {
-            sentMessage = await interaction.followUp(options);
-        } else {
-            sentMessage = await interaction.reply(options);
-        }
+        const currentOptions = { ...options, flags: [MessageFlags.Ephemeral] };
+        if (isEdit) sentMessage = await interaction.editReply(currentOptions);
+        else if (isFollowUp) sentMessage = await interaction.followUp(currentOptions);
+        else sentMessage = await interaction.reply(currentOptions);
 
-        // For ephemeral followUps and editReplies that return a Message object
-        if (sentMessage && sentMessage.delete && typeof sentMessage.delete === 'function') {
+        if (sentMessage && typeof sentMessage.delete === 'function') {
             setTimeout(() => {
-                sentMessage.delete().catch(err => console.error(`[AUTO_DELETE_ERROR] Failed to delete ephemeral cmd reply ${sentMessage.id}:`, err.message));
+                sentMessage.delete().catch(err => {
+                    if (err.code !== 10008) {
+                        console.error(`[AUTO_DELETE_ERROR] Failed to delete ephemeral cmd reply ${sentMessage.id || 'unknown'}:`, err.message);
+                    }
+                });
             }, EPHEMERAL_DELETE_DELAY);
         }
-        // For initial interaction.reply(), the response might not be a deletable Message object directly.
-        // However, ephemeral messages will disappear for the user anyway.
-        // If discord.js API changes to consistently return Message for ephemeral interaction.reply(), this will cover it.
     } catch (error) {
         console.error(`[CMD_REPLY_ERROR] Failed to send or handle ephemeral auto-delete reply:`, error.message);
     }
 }
-
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -38,31 +33,27 @@ module.exports = {
         .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator)
         .setDMPermission(false),
 
-    async execute(interaction, client, guildConfigs, saveGuildConfigs, _clearSheetFunction, _replyHelper) { // clearSheet and replyHelper not used directly here but kept for signature consistency if needed
+    async execute(interaction, client, guildConfigs, saveGuildConfigs) { // Removed unused _clearSheetFunction, _replyHelper for this command
         if (!interaction.inGuild()) {
-            commandReplyEphemeralAutoDelete(interaction, { content: 'This command can only be used in a server.', flags: [MessageFlags.Ephemeral] });
+            commandReplyEphemeralAutoDelete(interaction, { content: 'This command can only be used in a server.' });
             return;
         }
-
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-            commandReplyEphemeralAutoDelete(interaction, { content: 'You must be an administrator to run this command.', flags: [MessageFlags.Ephemeral] });
+            commandReplyEphemeralAutoDelete(interaction, { content: 'You must be an administrator to run this command.' });
             return;
         }
-
         const channel = interaction.channel;
         if (channel.type !== ChannelType.GuildText) {
-            commandReplyEphemeralAutoDelete(interaction, { content: 'This command must be used in a standard text channel.', flags: [MessageFlags.Ephemeral] });
+            commandReplyEphemeralAutoDelete(interaction, { content: 'This command must be used in a standard text channel.' });
             return;
         }
         if (!channel.parentId) {
-            commandReplyEphemeralAutoDelete(interaction, { content: 'This channel is not in a category. Please run this command in a channel that is within a category designated for ticket prompts.', flags: [MessageFlags.Ephemeral] });
+            commandReplyEphemeralAutoDelete(interaction, { content: 'This channel is not in a category. Please run this command in a channel that is within a category designated for ticket prompts.' });
             return;
         }
         const category = channel.parent;
-
         const SHUTDOWN_ROLE_NAME = "Bot Shutdown";
         const shutdownRole = interaction.guild.roles.cache.find(role => role.name === SHUTDOWN_ROLE_NAME);
-
         const adminRoles = interaction.guild.roles.cache.filter(role =>
             role.permissions.has(PermissionsBitField.Flags.Administrator) &&
             !role.managed &&
@@ -71,23 +62,16 @@ module.exports = {
         const adminRoleIds = adminRoles.map(role => role.id);
 
         try {
-            // Defer the main reply to avoid timeout if there are multiple messages
-            // The deferred reply itself is ephemeral and will disappear.
-            // We will send follow-ups or edit this deferred reply.
             await interaction.deferReply({ ephemeral: true });
-
             const openTicketButton = new ButtonBuilder()
                 .setCustomId('create_ticket_button')
                 .setLabel('🎟️ Open Ticket')
                 .setStyle(ButtonStyle.Primary);
-
             const viewSheetButton = new ButtonBuilder()
                 .setCustomId('admin_view_sheet_button')
                 .setLabel('📊 View Activity Log (Admins)')
                 .setStyle(ButtonStyle.Secondary);
-
             const row = new ActionRowBuilder().addComponents(openTicketButton, viewSheetButton);
-
             const initialMessageContent =
 `**Welcome to the Screenshot Submission System!** 🗓️
 
@@ -118,10 +102,11 @@ Click the "🎟️ Open Ticket" button below to create a private channel where y
                 }
             }
 
-            const promptMessage = await channel.send({
-                content: initialMessageContent,
-                components: [row]
-            });
+            const promptMessage = await channel.send({ content: initialMessageContent, components: [row] });
+
+            // Get SPREADSHEET_ID from process.env to store in guildConfig
+            // This ensures the admin_view_sheet_button has the correct ID later
+            const currentSpreadsheetId = process.env.SPREADSHEET_ID;
 
             guildConfigs[interaction.guildId] = {
                 guildId: interaction.guildId,
@@ -133,32 +118,26 @@ Click the "🎟️ Open Ticket" button below to create a private channel where y
                 adminRoleIds: adminRoleIds,
                 shutdownRoleId: shutdownRole ? shutdownRole.id : null,
                 shutdownRoleName: shutdownRole ? shutdownRole.name : null,
-                spreadsheetId: config.spreadsheetId
+                spreadsheetId: currentSpreadsheetId // Store the ID from environment
             };
             saveGuildConfigs();
             console.log(`--- Setup Command Executed & Config Saved for Guild: ${interaction.guild.name} (${interaction.guildId}) ---`);
 
             if (client.updatePromptMessage) {
-                client.updatePromptMessage(interaction.guildId, promptMessage.id, channel.id);
+                client.updatePromptMessage(interaction.guildId, promptMessage.id, channel.id, client);
             }
 
             let setupResponseMessage = `Setup complete! The new ticket prompt has been posted in this channel (${channel.name}).`;
-            // interaction.editReply is used for the deferred ephemeral reply.
-            const mainReplyOptions = { content: setupResponseMessage };
-            commandReplyEphemeralAutoDelete(interaction, mainReplyOptions, false, true); // isEdit = true
+            commandReplyEphemeralAutoDelete(interaction, { content: setupResponseMessage }, false, true);
 
-            const spreadsheetUrl = `https://docs.google.com/spreadsheets/d/${config.spreadsheetId}/edit`;
-            const adminFollowUpMessage = `Admin Info: The Google Sheet for logging can be found here: <${spreadsheetUrl}>`;
-            // interaction.followUp is used for an additional ephemeral reply.
-            const adminReplyOptions = { content: adminFollowUpMessage, flags: [MessageFlags.Ephemeral] };
-            commandReplyEphemeralAutoDelete(interaction, adminReplyOptions, true); // isFollowUp = true
-
+            // The admin_view_sheet_button in index.js will use guildConfig.spreadsheetId
+            // No need to send the link from here anymore as the button handles it.
 
         } catch (error) {
             console.error('[ERROR] Error executing /setup command:', error);
-            const errorReplyOptions = { content: 'An error occurred during setup. Please check the console and my permissions.', flags: [MessageFlags.Ephemeral] };
+            const errorReplyOptions = { content: 'An error occurred during setup. Please check the console and my permissions.' };
             if (interaction.deferred || interaction.replied) {
-                commandReplyEphemeralAutoDelete(interaction, errorReplyOptions, false, true); // isEdit = true
+                commandReplyEphemeralAutoDelete(interaction, errorReplyOptions, false, true);
             } else {
                 commandReplyEphemeralAutoDelete(interaction, errorReplyOptions);
             }
