@@ -1,14 +1,23 @@
-
 // index.js
 
 console.log("--- index.js script started ---");
+
+// --- Environment Variable Debugging ---
+console.log("[ENV_DEBUG] Attempting to read critical environment variables:");
+console.log(`[ENV_DEBUG] BOT_TOKEN exists: ${!!process.env.BOT_TOKEN}`);
+console.log(`[ENV_DEBUG] SPREADSHEET_ID exists: ${!!process.env.SPREADSHEET_ID}`);
+console.log(`[ENV_DEBUG] SHEET_NAME exists: ${!!process.env.SHEET_NAME}`);
+console.log(`[ENV_DEBUG] GOOGLE_DRIVE_FOLDER_ID exists: ${!!process.env.GOOGLE_DRIVE_FOLDER_ID}`);
+console.log(`[ENV_DEBUG] GOOGLE_CREDENTIALS_JSON exists: ${!!process.env.GOOGLE_CREDENTIALS_JSON}`);
+// console.log("[ENV_DEBUG] All process.env keys:", Object.keys(process.env).join(', ')); // Optional: very verbose
+
 
 const { Client, GatewayIntentBits, Events, Partials, Collection, PermissionsBitField, ChannelType, MessageFlags } = require('discord.js');
 // const config = require('./config.json'); // REMOVED - We will use environment variables
 
 // Node.js built-in modules for file and path operations
-const fs = require('node:fs'); // Still needed for guild-configs.json
-const path = require('node:path'); // Still needed for paths
+const fs = require('node:fs');
+const path = require('node:path');
 
 // Google APIs Client Library
 const { google } = require('googleapis');
@@ -16,7 +25,7 @@ const { google } = require('googleapis');
 // Cron job scheduler
 const cron = require('node-cron');
 
-// For downloading images (if you keep Google Drive integration)
+// For downloading images
 const axios = require('axios');
 const stream = require('stream');
 
@@ -26,8 +35,6 @@ const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME = process.env.SHEET_NAME || 'Sheet1'; // Default if not set
 const DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID;
 const GOOGLE_CREDENTIALS_JSON_CONTENT = process.env.GOOGLE_CREDENTIALS_JSON;
-
-// const SHEETS_CREDENTIALS_PATH = path.join(__dirname, 'credentials.json'); // REMOVED
 
 const API_SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets',
@@ -99,26 +106,26 @@ async function ensureSheetHeaders() {
 
 async function authorizeGoogleAPIs() {
     try {
-        // Check if environment variables are loaded
+        // Check if environment variables are loaded (this check is now more for confirmation after debug logs)
         if (!TOKEN || !SPREADSHEET_ID || !SHEET_NAME || !DRIVE_FOLDER_ID) {
-            console.error('[GAPI_ERROR] One or more critical environment variables (TOKEN, SPREADSHEET_ID, SHEET_NAME, GOOGLE_DRIVE_FOLDER_ID) are missing.');
-            return false;
+            console.error('[GAPI_ERROR_INIT] One or more critical environment variables for Google API (SPREADSHEET_ID, SHEET_NAME, GOOGLE_DRIVE_FOLDER_ID) appear missing based on direct check.');
+            // No early return here if GOOGLE_CREDENTIALS_JSON_CONTENT is present, as auth might still work if others are just for sheet ops
         }
         if (!GOOGLE_CREDENTIALS_JSON_CONTENT) {
-            console.error('[GAPI_ERROR] GOOGLE_CREDENTIALS_JSON environment variable not set or empty.');
-            return false;
+            console.error('[GAPI_ERROR_INIT] GOOGLE_CREDENTIALS_JSON_CONTENT environment variable is definitely not set.');
+            return false; // Cannot proceed without credentials
         }
 
         let googleCredentials;
         try {
             googleCredentials = JSON.parse(GOOGLE_CREDENTIALS_JSON_CONTENT);
         } catch (parseError) {
-            console.error('[GAPI_ERROR] Failed to parse GOOGLE_CREDENTIALS_JSON environment variable. Ensure it is a valid JSON string.', parseError);
+            console.error('[GAPI_ERROR_INIT] Failed to parse GOOGLE_CREDENTIALS_JSON. Ensure it is a valid JSON string.', parseError);
             return false;
         }
         
         googleAuthClient = new google.auth.GoogleAuth({
-            credentials: googleCredentials, // Use credentials object from environment variable
+            credentials: googleCredentials,
             scopes: API_SCOPES
         });
         const authClient = await googleAuthClient.getClient();
@@ -140,16 +147,17 @@ async function authorizeGoogleAPIs() {
         }
         return true;
     } catch (error) {
-        console.error('[GAPI_ERROR] Failed to authorize Google Sheets/Drive or process sheet metadata:', error.message);
+        console.error('[GAPI_ERROR_AUTH] Failed to authorize Google Sheets/Drive or process sheet metadata:', error.message);
         return false;
     }
 }
 
-const GUILD_CONFIGS_PATH = path.join(__dirname, 'guild-configs.json'); // This can stay as a local file
+const GUILD_CONFIGS_PATH = path.join(__dirname, 'guild-configs.json');
 let guildConfigs = {};
 let openTickets = {};
 
 function loadGuildConfigs() {
+    // ... (same as before)
     try {
         if (fs.existsSync(GUILD_CONFIGS_PATH)) {
             guildConfigs = JSON.parse(fs.readFileSync(GUILD_CONFIGS_PATH, 'utf8'));
@@ -166,6 +174,7 @@ function loadGuildConfigs() {
 }
 
 function saveGuildConfigs() {
+    // ... (same as before)
     try {
         fs.writeFileSync(GUILD_CONFIGS_PATH, JSON.stringify(guildConfigs, null, 4));
         console.log('[CONFIG] Saved guild configurations.');
@@ -175,6 +184,7 @@ function saveGuildConfigs() {
 }
 
 function formatTimestamp(date, includeSeconds = false, dateOnly = false) {
+    // ... (same as before)
     const year = String(date.getUTCFullYear()).slice(-2);
     const month = String(date.getUTCMonth() + 1).padStart(2, '0');
     const day = String(date.getUTCDate()).padStart(2, '0');
@@ -187,6 +197,7 @@ function formatTimestamp(date, includeSeconds = false, dateOnly = false) {
 }
 
 async function clearSheet() {
+    // ... (same as before)
     if (!sheetsClient || !SPREADSHEET_ID || !SHEET_NAME) {
         console.log('[GSHEETS_CLEAR] Sheets client/config missing. Skipping clear.'); return false;
     }
@@ -201,6 +212,7 @@ async function clearSheet() {
 }
 
 async function autoResizeSheetColumns() {
+    // ... (same as before)
     if (!sheetsClient || !SPREADSHEET_ID || typeof numericSheetId === 'undefined') {
         console.log('[GSHEETS_RESIZE] Sheets client/config missing. Skipping resize.'); return;
     }
@@ -216,6 +228,7 @@ async function autoResizeSheetColumns() {
 }
 
 function formatDuration(ms, short = false) {
+    // ... (same as before)
     if (ms < 0) ms = 0;
     const totalSeconds = Math.floor(ms / 1000);
     const days = Math.floor(totalSeconds / 86400);
@@ -232,7 +245,7 @@ function formatDuration(ms, short = false) {
 }
 
 async function updatePromptMessage(guildId, messageId, channelId, clientInstance) {
-    // ... (This function remains the same as v17)
+    // ... (same as before)
     if (!clientInstance) { console.error(`[PROMPT_UPDATE_ERROR] clientInstance undefined for G:${guildId}`); return; }
     const guildConfig = guildConfigs[guildId];
     if (!guildConfig || guildConfig.promptMessageId !== messageId || guildConfig.promptChannelId !== channelId) return;
@@ -260,6 +273,7 @@ async function updatePromptMessage(guildId, messageId, channelId, clientInstance
 }
 
 async function updateAllPromptMessages(clientInstance) {
+    // ... (same as before)
     for (const guildId in guildConfigs) {
         const config = guildConfigs[guildId];
         if (config.promptMessageId && config.promptChannelId) {
@@ -270,18 +284,22 @@ async function updateAllPromptMessages(clientInstance) {
 
 (async () => {
     console.log("--- Initializing Bot ---");
-    // Check for critical environment variables early
-    if (!process.env.BOT_TOKEN || !process.env.SPREADSHEET_ID || !process.env.GOOGLE_DRIVE_FOLDER_ID || !process.env.GOOGLE_CREDENTIALS_JSON) {
+    // Moved the critical check here, after defining the constants from process.env
+    if (!TOKEN || !SPREADSHEET_ID || !DRIVE_FOLDER_ID || !GOOGLE_CREDENTIALS_JSON_CONTENT) {
         console.error("[FATAL_CONFIG_ERROR] Critical environment variables (BOT_TOKEN, SPREADSHEET_ID, GOOGLE_DRIVE_FOLDER_ID, GOOGLE_CREDENTIALS_JSON) are not set. Exiting.");
+        console.log(`[ENV_DEBUG_FATAL] BOT_TOKEN exists: ${!!TOKEN}`);
+        console.log(`[ENV_DEBUG_FATAL] SPREADSHEET_ID exists: ${!!SPREADSHEET_ID}`);
+        console.log(`[ENV_DEBUG_FATAL] SHEET_NAME exists: ${!!SHEET_NAME}`); // SHEET_NAME has a default, so it might appear true
+        console.log(`[ENV_DEBUG_FATAL] GOOGLE_DRIVE_FOLDER_ID exists: ${!!DRIVE_FOLDER_ID}`);
+        console.log(`[ENV_DEBUG_FATAL] GOOGLE_CREDENTIALS_JSON_CONTENT exists: ${!!GOOGLE_CREDENTIALS_JSON_CONTENT}`);
         process.exit(1);
     }
 
     if (!await authorizeGoogleAPIs()) {
-        console.error("[FATAL] Failed to authorize Google APIs. Bot will not start full functionality.");
-        // Decide if you want to exit or run with limited features
-        // process.exit(1); // Optional: exit if Google APIs are critical
+        console.error("[FATAL] Failed to authorize Google APIs. Bot may have limited functionality or exit.");
+        // process.exit(1); // Optional: exit if Google APIs are absolutely critical for startup
     }
-    loadGuildConfigs(); // guild-configs.json can still be a local file for guild-specific, non-secret settings
+    loadGuildConfigs();
     const client = new Client({
         intents: [
             GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent,
@@ -318,8 +336,7 @@ async function updateAllPromptMessages(clientInstance) {
     });
 
     client.on(Events.InteractionCreate, async interaction => {
-        // ... (Interaction logic from v16 - largely unchanged, ensure ephemeral replies use the helper)
-        // Make sure to pass 'replyEphemeralAutoDelete' to command.execute if it's used there
+        // ... (Interaction logic from v17 - unchanged)
         if (!interaction.inGuild()) return;
         const guildConfig = guildConfigs[interaction.guildId];
 
@@ -330,7 +347,6 @@ async function updateAllPromptMessages(clientInstance) {
                 return;
             }
             try {
-                // Pass the helper function to commands
                 await command.execute(interaction, client, guildConfigs, saveGuildConfigs, clearSheet, replyEphemeralAutoDelete);
             } catch (error) {
                 console.error(`Error executing /${interaction.commandName}:`, error);
@@ -342,7 +358,6 @@ async function updateAllPromptMessages(clientInstance) {
                 }
             }
         } else if (interaction.isButton()) {
-            // ... (Button interaction logic from v16, ensure replyEphemeralAutoDelete is used for all ephemeral replies)
             if (interaction.customId === 'create_ticket_button') {
                 if (!guildConfig) { replyEphemeralAutoDelete(interaction, { content: 'Ticket system not configured.' }); return; }
                 const member = interaction.member;
@@ -401,7 +416,7 @@ async function updateAllPromptMessages(clientInstance) {
                 if (currentGuildConfig && currentGuildConfig.spreadsheetId) {
                     const spreadsheetUrl = `https://docs.google.com/spreadsheets/d/${currentGuildConfig.spreadsheetId}/edit`;
                     replyOptions = { content: `📊 **Activity Log Sheet:** <${spreadsheetUrl}>` };
-                } else if (SPREADSHEET_ID) { // Fallback to global SPREADSHEET_ID
+                } else if (SPREADSHEET_ID) {
                      const spreadsheetUrl = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/edit`;
                     replyOptions = { content: `📊 **Activity Log Sheet (Global Fallback):** <${spreadsheetUrl}>` };
                 } else {
@@ -413,7 +428,7 @@ async function updateAllPromptMessages(clientInstance) {
     });
 
     client.on(Events.MessageCreate, async message => {
-        // ... (MessageCreate logic from v17 - unchanged for this specific request, ensure it's the latest)
+        // ... (MessageCreate logic from v17 - unchanged)
         if (message.author.bot || !message.guild) return;
         if (blankTicketTimeouts.has(message.channel.id)) {
             clearTimeout(blankTicketTimeouts.get(message.channel.id));
@@ -537,6 +552,7 @@ async function updateAllPromptMessages(clientInstance) {
     });
 
     client.on(Events.ChannelDelete, channel => {
+        // ... (ChannelDelete logic from v17 - unchanged)
         if (!channel.guild) return;
         const guildId = channel.guild.id;
         if (blankTicketTimeouts.has(channel.id)) {
@@ -561,3 +577,4 @@ async function updateAllPromptMessages(clientInstance) {
         process.exit(1);
     });
 })();
+
