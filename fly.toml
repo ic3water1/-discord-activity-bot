@@ -1,5 +1,5 @@
 # fly.toml app configuration file for discordbotjs
-# Documentation: https://fly.io/docs/reference/configuration/
+# This configuration is for a background worker that doesn't expose HTTP/TCP services.
 
 app = 'discordbotjs'
 primary_region = 'dfw' # Or your chosen region
@@ -8,34 +8,10 @@ primary_region = 'dfw' # Or your chosen region
   dockerfile = "Dockerfile"
 
 # Defines the 'app' process that runs your Docker CMD
+# For workers, you might not need a [[services]] block if you don't need health checks on a port.
+# We will manage the number of running machines using `fly scale count`.
 [processes]
-  app = "" # Uses Dockerfile's CMD
-
-# This service definition is for the 'app' process group.
-# It helps Fly.io manage the lifecycle and health of your bot.
-[[services]]
-  processes = ["app"]
-  protocol = "tcp"
-  internal_port = 8080 # Your app doesn't need to listen on this, but Fly.io uses it for TCP health checks.
-
-  # Crucial settings for an always-on bot:
-  auto_stop_machines = false   # Do NOT stop the machine when idle
-  auto_start_machines = true   # Start the machine automatically if it stops
-  min_machines_running = 1     # Ensure at least ONE instance of your bot is always running
-
-  # Remove any [[services.ports]] section that would expose this to the internet via HTTP/HTTPS handlers.
-  # We only want Fly.io to know a process should be running and checkable on this internal port.
-
-  # TCP health check (Fly.io will attempt to connect to this port)
-  # Since your bot doesn't listen, this check *might* still fail.
-  # If it causes continuous restarts, we might need to remove this tcp_checks block
-  # and rely solely on min_machines_running = 1 and process supervision.
-  # However, having a service defined often helps with the "must expose at least one port" warning.
-  [[services.tcp_checks]]
-    interval = "15s"
-    timeout = "2s"
-    grace_period = "5s" # Give it some time to start before checks begin in earnest
-    # port = 8080 # Implicitly uses the service's internal_port
+  app = "" # Uses Dockerfile's CMD (node index.js)
 
 # VM Configuration for the free tier
 [[vm]]
