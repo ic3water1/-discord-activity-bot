@@ -1,6 +1,6 @@
 // commands/setup.js
 const { SlashCommandBuilder, PermissionsBitField, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
-// const config = require('../config.json'); // REMOVE THIS LINE - config is no longer used directly here
+// const config = require('../config.json'); // REMOVED THIS LINE
 
 const EPHEMERAL_DELETE_DELAY = 10000; // 10 seconds
 
@@ -15,7 +15,7 @@ async function commandReplyEphemeralAutoDelete(interaction, options, isFollowUp 
         if (sentMessage && typeof sentMessage.delete === 'function') {
             setTimeout(() => {
                 sentMessage.delete().catch(err => {
-                    if (err.code !== 10008) {
+                    if (err.code !== 10008) { // Silently ignore "Unknown Message"
                         console.error(`[AUTO_DELETE_ERROR] Failed to delete ephemeral cmd reply ${sentMessage.id || 'unknown'}:`, err.message);
                     }
                 });
@@ -33,7 +33,7 @@ module.exports = {
         .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator)
         .setDMPermission(false),
 
-    async execute(interaction, client, guildConfigs, saveGuildConfigs) { // Removed unused _clearSheetFunction, _replyHelper for this command
+    async execute(interaction, client, guildConfigs, saveGuildConfigs) {
         if (!interaction.inGuild()) {
             commandReplyEphemeralAutoDelete(interaction, { content: 'This command can only be used in a server.' });
             return;
@@ -104,8 +104,7 @@ Click the "🎟️ Open Ticket" button below to create a private channel where y
 
             const promptMessage = await channel.send({ content: initialMessageContent, components: [row] });
 
-            // Get SPREADSHEET_ID from process.env to store in guildConfig
-            // This ensures the admin_view_sheet_button has the correct ID later
+            // Get SPREADSHEET_ID from process.env to store in guildConfig for the admin button
             const currentSpreadsheetId = process.env.SPREADSHEET_ID;
 
             guildConfigs[interaction.guildId] = {
@@ -128,10 +127,7 @@ Click the "🎟️ Open Ticket" button below to create a private channel where y
             }
 
             let setupResponseMessage = `Setup complete! The new ticket prompt has been posted in this channel (${channel.name}).`;
-            commandReplyEphemeralAutoDelete(interaction, { content: setupResponseMessage }, false, true);
-
-            // The admin_view_sheet_button in index.js will use guildConfig.spreadsheetId
-            // No need to send the link from here anymore as the button handles it.
+            commandReplyEphemeralAutoDelete(interaction, { content: setupResponseMessage }, false, true); // isEdit = true
 
         } catch (error) {
             console.error('[ERROR] Error executing /setup command:', error);
