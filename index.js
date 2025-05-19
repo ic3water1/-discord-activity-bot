@@ -7,35 +7,40 @@ const path = require('node:path');
 const { google } = require('googleapis');
 const cron = require('node-cron');
 
+// Validate critical environment variables
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME = process.env.SHEET_NAME || 'Sheet1';
 const DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID;
 const GOOGLE_CREDENTIALS_JSON_CONTENT = process.env.GOOGLE_CREDENTIALS_JSON;
+
+if (!TOKEN || !SPREADSHEET_ID || !DRIVE_FOLDER_ID || !GOOGLE_CREDENTIALS_JSON_CONTENT) {
+    console.error("[FATAL_CONFIG_ERROR] Missing required environment variables");
+    console.log(`  BOT_TOKEN present: ${!!TOKEN}`);
+    console.log(`  SPREADSHEET_ID present: ${!!SPREADSHEET_ID}`);
+    console.log(`  DRIVE_FOLDER_ID present: ${!!DRIVE_FOLDER_ID}`);
+    console.log(`  GOOGLE_CREDENTIALS_JSON present: ${!!GOOGLE_CREDENTIALS_JSON_CONTENT}`);
+    process.exit(1);
+}
 
 const API_SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/drive.file'
 ];
 
-// Initialize clients
-let sheetsClient, driveClient, googleAuthClient;
+let sheetsClient, driveClient;
 
 async function authorizeGoogleAPIs() {
     try {
-        if (!GOOGLE_CREDENTIALS_JSON_CONTENT) {
-            throw new Error('Google credentials JSON content is missing');
-        }
-
         const auth = new google.auth.GoogleAuth({
             credentials: JSON.parse(GOOGLE_CREDENTIALS_JSON_CONTENT),
             scopes: API_SCOPES
         });
         
-        googleAuthClient = await auth.getClient();
-        sheetsClient = google.sheets({ version: 'v4', auth: googleAuthClient });
-        driveClient = google.drive({ version: 'v3', auth: googleAuthClient });
+        const authClient = await auth.getClient();
+        sheetsClient = google.sheets({ version: 'v4', auth: authClient });
+        driveClient = google.drive({ version: 'v3', auth: authClient });
         
-        // Verify access
+        // Test the connection
         await sheetsClient.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
         return true;
     } catch (error) {
@@ -44,28 +49,7 @@ async function authorizeGoogleAPIs() {
     }
 }
 
-// Improved error handling for interactions
-async function handleInteractionError(interaction, error) {
-    console.error(`Error in interaction ${interaction.commandName}:`, error);
-    
-    try {
-        if (interaction.deferred || interaction.replied) {
-            await interaction.followUp({
-                content: 'An error occurred while executing this command!',
-                ephemeral: true
-            });
-        } else {
-            await interaction.reply({
-                content: 'An error occurred while executing this command!',
-                ephemeral: true
-            });
-        }
-    } catch (err) {
-        console.error('Failed to send error message:', err);
-    }
-}
-
-// Initialize Discord client
+// Initialize Discord client with proper intents
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -73,10 +57,10 @@ const client = new Client({
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers
     ],
-    partials: [Partials.Message, Partials.Channel]
+    partials: [Partials.Message, Partials.Channel, Partials.Reaction]
 });
 
-// Load commands
+// Command handling
 client.commands = new Collection();
 const commandsPath = path.join(__dirname, 'commands');
 const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
@@ -87,25 +71,7 @@ for (const file of commandFiles) {
     console.log(`Loaded command ${command.data.name}`);
 }
 
-// Client events
-client.once(Events.ClientReady, async readyClient => {
-    console.log(`Logged in as ${readyClient.user.tag}`);
-    
-    try {
-        // Initialize scheduled tasks with proper error handling
-        cron.schedule('0 0 * * 0', () => {
-            console.log('Running weekly cleanup...');
-            // Add your cleanup logic here
-        }, {
-            timezone: 'UTC',
-            scheduled: true,
-            recoverMissedExecutions: false
-        });
-    } catch (error) {
-        console.error('Failed to schedule tasks:', error);
-    }
-});
-
+// Improved interaction handling
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isCommand()) return;
 
@@ -113,17 +79,78 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!command) return;
 
     try {
-        // Defer reply to avoid timeout
         await interaction.deferReply({ ephemeral: true });
-        
-        // Execute command
         await command.execute(interaction);
     } catch (error) {
-        await handleInteractionError(interaction, error);
+        console.error(`Error executing ${interaction.commandName}:`, error);
+        try {
+            if (interaction.deferred || interaction.replied) {
+                await interaction.followUp({
+                    content: 'An error occurred while executing this command!',
+                    ephemeral: true
+                });
+            } else {
+                await interaction.reply({
+                    content: 'An error occurred while executing this command!',
+                    ephemeral: true
+                });
+            }
+        } catch (err) {
+            console.error('Failed to send error message:', err);
+        }
     }
 });
 
-// Error handling
+// Initialize scheduled tasks with error handling
+function initializeScheduledTasks() {
+    try {
+        const job = cron.schedule('0 0 * * 0', () => {
+            console.log('Running weekly cleanup...');
+            // Add your cleanup logic here
+        }, {
+            timezone: 'Etc/UTC',
+            scheduled: true
+        });
+        job.start();
+    } catch (error) {
+        console.error('Failed to schedule tasks:', error);
+    }
+}
+
+// Client ready event
+client.once(Events.ClientReady, async readyClient => {
+    console.log(`Logged in as ${readyClient.user.tag}`);
+    initializeScheduledTasks();
+});
+
+// Graceful shutdown handling
+process.on('SIGINT', async () => {
+    console.log('Received SIGINT. Shutting down gracefully...');
+    try {
+        if (client && client.destroy) {
+            await client.destroy();
+        }
+        process.exit(0);
+    } catch (error) {
+        console.error('Error during shutdown:', error);
+        process.exit(1);
+    }
+});
+
+process.on('SIGTERM', async () => {
+    console.log('Received SIGTERM. Shutting down gracefully...');
+    try {
+        if (client && client.destroy) {
+            await client.destroy();
+        }
+        process.exit(0);
+    } catch (error) {
+        console.error('Error during shutdown:', error);
+        process.exit(1);
+    }
+});
+
+// Global error handlers
 process.on('unhandledRejection', error => {
     console.error('Unhandled promise rejection:', error);
 });
@@ -132,14 +159,11 @@ process.on('uncaughtException', error => {
     console.error('Uncaught exception:', error);
 });
 
-// Startup sequence
+// Main startup sequence
 (async () => {
     try {
-        // Validate environment variables
-        if (!TOKEN || !SPREADSHEET_ID || !DRIVE_FOLDER_ID || !GOOGLE_CREDENTIALS_JSON_CONTENT) {
-            throw new Error('Missing required environment variables');
-        }
-
+        console.log("--- Initializing Bot ---");
+        
         // Initialize Google APIs
         const googleAuthSuccess = await authorizeGoogleAPIs();
         if (!googleAuthSuccess) {
@@ -148,9 +172,9 @@ process.on('uncaughtException', error => {
 
         // Start Discord client
         await client.login(TOKEN);
-        console.log('Bot is running and listening for events');
+        console.log("Bot is running and listening for events");
     } catch (error) {
-        console.error('Fatal startup error:', error);
+        console.error("Fatal startup error:", error);
         process.exit(1);
     }
 })();
