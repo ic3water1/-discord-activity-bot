@@ -1,21 +1,25 @@
-# fly.toml app configuration file for discordbotjs
-# This configuration is for a background worker that doesn't expose HTTP/TCP services.
+    # fly.toml app configuration file for discordbotjs
+    # This configuration is for a background worker that doesn't expose HTTP/TCP services.
 
-app = 'discordbotjs'
-primary_region = 'dfw' # Or your chosen region
+    app = 'discordbotjs'
+    primary_region = 'dfw' # Or your chosen region
 
-[build]
-  dockerfile = "Dockerfile"
+    [build]
+      dockerfile = "Dockerfile"
 
-# Defines the 'app' process that runs your Docker CMD
-# For workers, you might not need a [[services]] block if you don't need health checks on a port.
-# We will manage the number of running machines using `fly scale count`.
-[processes]
-  app = "" # Uses Dockerfile's CMD (node index.js)
+    # Defines the 'app' process that runs your Docker CMD
+    [processes]
+      app = "" # Uses Dockerfile's CMD (node index.js)
 
-# VM Configuration for the free tier
-[[vm]]
-  cpu_kind = 'shared'
-  cpus = 1
-  memory_mb = 256 # Explicitly define 256MB RAM
+    # For a worker that doesn't need to serve traffic, we might not need a [[services]] block.
+    # We will manage the number of running machines using `fly scale count 1`
+    # and rely on Fly.io's process supervision to keep it running.
+    # If health checks are desired without exposing a port, Fly.io offers different types.
+    # For now, this simpler config relies on the process not exiting.
 
+    # VM Configuration for the free tier
+    [[vm]]
+      cpu_kind = 'shared'
+      cpus = 1
+      memory_mb = 256 # Explicitly define 256MB RAM
+    
