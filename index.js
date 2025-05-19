@@ -1,180 +1,71 @@
-console.log("--- index.js script started ---");
+// index.js
+// Ensure this is based on the latest full version like discord_js_index_final_keep_alive_retrieved
+// or discord_js_index_interaction_debug
 
-const { Client, GatewayIntentBits, Events, Partials, Collection, EmbedBuilder } = require('discord.js');
-const TOKEN = process.env.BOT_TOKEN;
-const fs = require('node:fs');
-const path = require('node:path');
-const { google } = require('googleapis');
-const cron = require('node-cron');
+// ... (all requires, constants, helper functions like replyEphemeralAutoDelete, authorizeGoogleAPIs, etc. remain the same) ...
+// The global replyEphemeralAutoDelete in index.js is still used for general interaction errors
+// and for button handlers directly within index.js.
 
-// Validate critical environment variables
-const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-const SHEET_NAME = process.env.SHEET_NAME || 'Sheet1';
-const DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID;
-const GOOGLE_CREDENTIALS_JSON_CONTENT = process.env.GOOGLE_CREDENTIALS_JSON;
-
-if (!TOKEN || !SPREADSHEET_ID || !DRIVE_FOLDER_ID || !GOOGLE_CREDENTIALS_JSON_CONTENT) {
-    console.error("[FATAL_CONFIG_ERROR] Missing required environment variables");
-    console.log(`  BOT_TOKEN present: ${!!TOKEN}`);
-    console.log(`  SPREADSHEET_ID present: ${!!SPREADSHEET_ID}`);
-    console.log(`  DRIVE_FOLDER_ID present: ${!!DRIVE_FOLDER_ID}`);
-    console.log(`  GOOGLE_CREDENTIALS_JSON present: ${!!GOOGLE_CREDENTIALS_JSON_CONTENT}`);
-    process.exit(1);
-}
-
-const API_SCOPES = [
-    'https://www.googleapis.com/auth/spreadsheets',
-    'https://www.googleapis.com/auth/drive.file'
-];
-
-let sheetsClient, driveClient;
-
-async function authorizeGoogleAPIs() {
-    try {
-        const auth = new google.auth.GoogleAuth({
-            credentials: JSON.parse(GOOGLE_CREDENTIALS_JSON_CONTENT),
-            scopes: API_SCOPES
-        });
-        
-        const authClient = await auth.getClient();
-        sheetsClient = google.sheets({ version: 'v4', auth: authClient });
-        driveClient = google.drive({ version: 'v3', auth: authClient });
-        
-        // Test the connection
-        await sheetsClient.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
-        return true;
-    } catch (error) {
-        console.error('Google API Authorization Error:', error);
-        return false;
-    }
-}
-
-// Initialize Discord client with proper intents
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers
-    ],
-    partials: [Partials.Message, Partials.Channel, Partials.Reaction]
-});
-
-// Command handling
-client.commands = new Collection();
-const commandsPath = path.join(__dirname, 'commands');
-const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
-
-for (const file of commandFiles) {
-    const command = require(path.join(commandsPath, file));
-    client.commands.set(command.data.name, command);
-    console.log(`Loaded command ${command.data.name}`);
-}
-
-// Improved interaction handling
-client.on(Events.InteractionCreate, async interaction => {
-    if (!interaction.isCommand()) return;
-
-    const command = client.commands.get(interaction.commandName);
-    if (!command) return;
-
-    try {
-        await interaction.deferReply({ ephemeral: true });
-        await command.execute(interaction);
-    } catch (error) {
-        console.error(`Error executing ${interaction.commandName}:`, error);
-        try {
-            if (interaction.deferred || interaction.replied) {
-                await interaction.followUp({
-                    content: 'An error occurred while executing this command!',
-                    ephemeral: true
-                });
-            } else {
-                await interaction.reply({
-                    content: 'An error occurred while executing this command!',
-                    ephemeral: true
-                });
-            }
-        } catch (err) {
-            console.error('Failed to send error message:', err);
-        }
-    }
-});
-
-// Initialize scheduled tasks with error handling
-function initializeScheduledTasks() {
-    try {
-        const job = cron.schedule('0 0 * * 0', () => {
-            console.log('Running weekly cleanup...');
-            // Add your cleanup logic here
-        }, {
-            timezone: 'Etc/UTC',
-            scheduled: true
-        });
-        job.start();
-    } catch (error) {
-        console.error('Failed to schedule tasks:', error);
-    }
-}
-
-// Client ready event
-client.once(Events.ClientReady, async readyClient => {
-    console.log(`Logged in as ${readyClient.user.tag}`);
-    initializeScheduledTasks();
-});
-
-// Graceful shutdown handling
-process.on('SIGINT', async () => {
-    console.log('Received SIGINT. Shutting down gracefully...');
-    try {
-        if (client && client.destroy) {
-            await client.destroy();
-        }
-        process.exit(0);
-    } catch (error) {
-        console.error('Error during shutdown:', error);
-        process.exit(1);
-    }
-});
-
-process.on('SIGTERM', async () => {
-    console.log('Received SIGTERM. Shutting down gracefully...');
-    try {
-        if (client && client.destroy) {
-            await client.destroy();
-        }
-        process.exit(0);
-    } catch (error) {
-        console.error('Error during shutdown:', error);
-        process.exit(1);
-    }
-});
-
-// Global error handlers
-process.on('unhandledRejection', error => {
-    console.error('Unhandled promise rejection:', error);
-});
-
-process.on('uncaughtException', error => {
-    console.error('Uncaught exception:', error);
-});
-
-// Main startup sequence
 (async () => {
-    try {
-        console.log("--- Initializing Bot ---");
-        
-        // Initialize Google APIs
-        const googleAuthSuccess = await authorizeGoogleAPIs();
-        if (!googleAuthSuccess) {
-            throw new Error('Failed to initialize Google APIs');
-        }
+    // ... (initialization and Google API auth as before) ...
+    // ... (client setup and command loading as before) ...
 
-        // Start Discord client
-        await client.login(TOKEN);
-        console.log("Bot is running and listening for events");
-    } catch (error) {
-        console.error("Fatal startup error:", error);
-        process.exit(1);
-    }
+    client.once(Events.ClientReady, readyClient => { /* ... same ... */ });
+
+    client.on(Events.InteractionCreate, async interaction => {
+        console.log(`[INTERACTION_DEBUG] Received interaction: Type=${interaction.type}, CustomID/CommandName=${interaction.customId || interaction.commandName}, User=${interaction.user.tag}, Guild=${interaction.guildId}`);
+        if (!interaction.inGuild()) {
+            replyEphemeralAutoDelete(interaction, { content: 'This interaction must be used in a server.' });
+            return;
+        }
+        const guildConfig = guildConfigs[interaction.guildId];
+
+        if (interaction.isChatInputCommand()) {
+            console.log(`[INTERACTION_DEBUG] Handling ChatInputCommand: /${interaction.commandName}`);
+            const command = interaction.client.commands.get(interaction.commandName);
+            if (!command) {
+                console.error(`[INTERACTION_ERROR] No command matching /${interaction.commandName} was found.`);
+                replyEphemeralAutoDelete(interaction, { content: `Error: Command /${interaction.commandName} not found.` });
+                return;
+            }
+            try {
+                console.log(`[INTERACTION_DEBUG] Executing command: /${interaction.commandName}`);
+                // MODIFIED: Adjust arguments passed based on what each command now expects
+                if (interaction.commandName === 'setup') {
+                    await command.execute(interaction, client, guildConfigs, saveGuildConfigs);
+                } else if (['tableclear', 'testday', 'testweek'].includes(interaction.commandName)) {
+                    // These commands need the Google API clients
+                    await command.execute(interaction, client, guildConfigs, saveGuildConfigs,
+                                          clearSheetWeekly, // This is the sheet-only clear for /tableclear
+                                          replyEphemeralAutoDelete, // Pass the global helper if commands expect it, OR they use their own
+                                          sheetsClient, driveClient, SPREADSHEET_ID, SHEET_NAME, numericSheetId);
+                } else if (interaction.commandName === 'close') {
+                     await command.execute(interaction, client, guildConfigs, saveGuildConfigs, clearSheetWeekly, replyEphemeralAutoDelete); // Close might not need all Google API clients
+                }
+                 else {
+                    // Fallback for any other commands - adjust signature as needed
+                    // Or assume a common signature if you standardize
+                    await command.execute(interaction, client, guildConfigs, saveGuildConfigs, clearSheetWeekly, replyEphemeralAutoDelete);
+                }
+            } catch (error) {
+                console.error(`[INTERACTION_ERROR] Uncaught error executing /${interaction.commandName} in index.js:`, error);
+                const errorReplyOptions = { content: 'Oops! Something went very wrong while running that command.' };
+                if (interaction.deferred) {
+                    console.log(`[INTERACTION_ERROR_HANDLER] Interaction was deferred, attempting editReply for general error.`);
+                    replyEphemeralAutoDelete(interaction, errorReplyOptions, false, true);
+                } else if (!interaction.replied) {
+                    console.log(`[INTERACTION_ERROR_HANDLER] Interaction not replied/deferred, attempting initial reply for general error.`);
+                    replyEphemeralAutoDelete(interaction, errorReplyOptions);
+                } else {
+                    console.log(`[INTERACTION_ERROR_HANDLER] Interaction already replied. No further error reply sent from global handler.`);
+                }
+            }
+        } else if (interaction.isButton()) {
+            // ... (Button logic remains largely the same, ensure its internal replies use a local helper or the global one,
+            //      and that deferReply is used appropriately)
+        }
+    });
+
+    // ... (rest of client.on(Events.MessageCreate), client.on(Events.ChannelDelete), client.login, keep-alive promise)
 })();
+
