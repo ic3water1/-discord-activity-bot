@@ -16,9 +16,17 @@ const SHEET_NAME = process.env.SHEET_NAME || 'Sheet1';
 const DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID;
 const GOOGLE_CREDENTIALS_JSON_CONTENT = process.env.GOOGLE_CREDENTIALS_JSON;
 
-const API_SCOPES = [ /* ... */ ];
-const EXPECTED_HEADERS = [ /* ... 9 headers for daily slot format ... */ ];
-// ... other constants for sheet columns ...
+const API_SCOPES = [
+    'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/drive.file'
+];
+const EXPECTED_HEADERS = [
+    'Discord Tag', 'Player Display Name', 'Screenshot', 'Timestamp (UTC)',
+    'Verified', 'Strikes', 'Time in Server', 'Ticket Channel Name', 'Drive File ID'
+];
+const COLUMN_DISCORD_TAG = 'A';
+const TIMESTAMP_COLUMN_INDEX = EXPECTED_HEADERS.indexOf('Timestamp (UTC)');
+const DRIVE_FILE_ID_COLUMN_INDEX = EXPECTED_HEADERS.indexOf('Drive File ID');
 
 let sheetsClient;
 let driveClient;
@@ -28,17 +36,17 @@ let numericSheetId;
 const blankTicketTimeouts = new Map();
 const EPHEMERAL_DELETE_DELAY = 10000;
 
-async function replyEphemeralAutoDelete(interaction, options, isFollowUp = false, isEdit = false) { /* ... same ... */ }
-async function ensureSheetHeadersAndStructure() { /* ... same as v19 ... */ }
-async function authorizeGoogleAPIs() { /* ... same as v19 ... */ }
+async function replyEphemeralAutoDelete(interaction, options, isFollowUp = false, isEdit = false) { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
+async function ensureSheetHeaders() { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
+async function authorizeGoogleAPIs() { /* ... same as v17/full_bot_env_vars_clean_v2 ... */ }
 const GUILD_CONFIGS_PATH = path.join(__dirname, 'guild-configs.json');
 let guildConfigs = {};
 let openTickets = {};
 function loadGuildConfigs() { /* ... same ... */ }
 function saveGuildConfigs() { /* ... same ... */ }
-function formatTimestamp(date, dateOnly = false) { /* ... same as v19 ... */ }
-async function clearSheetWeekly() { /* ... same as v19 ... */ }
-async function autoResizeSheetColumns() { /* ... same as v19 ... */ }
+function formatTimestamp(date, includeSeconds = false, dateOnly = false) { /* ... same (MM-DD-YY format) ... */ }
+async function clearSheetWeekly() { /* ... This is the clearSheet function from v19 (renamed for clarity) ... */ }
+async function autoResizeSheetColumns() { /* ... same ... */ }
 function formatDuration(ms, short = false) { /* ... same ... */ }
 async function updatePromptMessage(guildId, messageId, channelId, clientInstance) { /* ... same ... */ }
 async function updateAllPromptMessages(clientInstance) { /* ... same ... */ }
@@ -56,52 +64,43 @@ async function updateAllPromptMessages(clientInstance) { /* ... same ... */ }
     }
 
     if (!await authorizeGoogleAPIs()) {
-        console.error("[FATAL] Failed to authorize Google APIs. Bot will exit.");
-        process.exit(1); // Exit if Google API auth fails
+        console.error("[FATAL_EXIT] Failed to authorize Google APIs. Bot cannot continue with full functionality. Exiting.");
+        process.exit(1);
     }
     loadGuildConfigs();
 
     // --- DEBUGGING INTENTS ---
-    console.log("[INTENT_DEBUG] Checking GatewayIntentBits values:");
-    console.log(`[INTENT_DEBUG] GatewayIntentBits.Guilds: ${GatewayIntentBits.Guilds}`);
-    console.log(`[INTENT_DEBUG] GatewayIntentBits.GuildMessages: ${GatewayIntentBits.GuildMessages}`);
-    console.log(`[INTENT_DEBUG] GatewayIntentBits.MessageContent: ${GatewayIntentBits.MessageContent}`);
-    console.log(`[INTENT_DEBUG] GatewayIntentBits.GuildMembers: ${GatewayIntentBits.GuildMembers}`);
-    console.log(`[INTENT_DEBUG] GatewayIntentBits.GuildMessageReactions: ${GatewayIntentBits.GuildMessageReactions}`);
+    console.log("[INTENT_DEBUG] Checking GatewayIntentBits values before Client instantiation:");
+    console.log(`[INTENT_DEBUG]   typeof GatewayIntentBits: ${typeof GatewayIntentBits}`);
+    console.log(`[INTENT_DEBUG]   GatewayIntentBits.Guilds: ${GatewayIntentBits?.Guilds}`);
+    console.log(`[INTENT_DEBUG]   GatewayIntentBits.GuildMessages: ${GatewayIntentBits?.GuildMessages}`);
+    console.log(`[INTENT_DEBUG]   GatewayIntentBits.MessageContent: ${GatewayIntentBits?.MessageContent}`);
+    console.log(`[INTENT_DEBUG]   GatewayIntentBits.GuildMembers: ${GatewayIntentBits?.GuildMembers}`);
+    console.log(`[INTENT_DEBUG]   GatewayIntentBits.GuildMessageReactions: ${GatewayIntentBits?.GuildMessageReactions}`);
 
-    const intentsArray = [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildMessageReactions,
-    ];
+    const intentsArray = [];
+    if (GatewayIntentBits && typeof GatewayIntentBits === 'object') {
+        if (GatewayIntentBits.Guilds) intentsArray.push(GatewayIntentBits.Guilds);
+        if (GatewayIntentBits.GuildMessages) intentsArray.push(GatewayIntentBits.GuildMessages);
+        if (GatewayIntentBits.MessageContent) intentsArray.push(GatewayIntentBits.MessageContent);
+        if (GatewayIntentBits.GuildMembers) intentsArray.push(GatewayIntentBits.GuildMembers);
+        if (GatewayIntentBits.GuildMessageReactions) intentsArray.push(GatewayIntentBits.GuildMessageReactions);
+    }
     console.log("[INTENT_DEBUG] Constructed intentsArray:", intentsArray);
+    if (intentsArray.length === 0) {
+        console.error("[INTENT_DEBUG_ERROR] intentsArray is empty! This will cause ClientMissingIntents.");
+    }
     // --- END DEBUGGING INTENTS ---
 
     const client = new Client({
-        intents: intentsArray, // Use the constructed array
+        intents: intentsArray, // Use the constructed and verified array
         partials: [Partials.Message, Partials.Channel, Partials.Reaction],
     });
 
     client.updatePromptMessage = updatePromptMessage;
     client.commands = new Collection();
     const commandsPath = path.join(__dirname, 'commands');
-    try {
-        const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
-        for (const file of commandFiles) {
-            const filePath = path.join(commandsPath, file);
-            const command = require(filePath);
-            if ('data' in command && 'execute' in command) {
-                client.commands.set(command.data.name, command);
-                console.log(`[CMDS] Loaded command: /${command.data.name}`);
-            } else {
-                console.log(`[WARNING] Command at ${filePath} missing "data" or "execute".`);
-            }
-        }
-    } catch (error) {
-        console.error(`[ERROR] Could not read commands dir:`, error);
-    }
+    try { /* ... command loading ... */ } catch (error) { /* ... */ }
 
     client.once(Events.ClientReady, readyClient => { /* ... same ... */ });
     client.on(Events.InteractionCreate, async interaction => { /* ... same interaction logic with debugging ... */ });
@@ -114,7 +113,7 @@ async function updateAllPromptMessages(clientInstance) { /* ... same ... */ }
     } catch (error) {
         console.error("\n[FATAL ERROR] Failed to log in to Discord:", error.message);
         if (error.code === 'ClientMissingIntents') {
-            console.error("[FATAL_LOGIN_ERROR] ClientMissingIntents error during login. This should have been caught earlier if intentsArray was bad.");
+            console.error("[FATAL_LOGIN_ERROR] ClientMissingIntents error during login. Check intentsArray and GatewayIntentBits values logged above.");
         } else if (error.code === 'DisallowedIntents') {
             console.error("[FATAL_LOGIN_ERROR] Privileged Gateway Intents likely missing or disabled for your bot in the Discord Developer Portal.");
         } else if (error.message.includes("TOKEN_INVALID") || (error.rawError && error.rawError.message === 'Unauthorized')) {
